@@ -57,17 +57,35 @@ export function MatchFeedbackModal({matchId,onClose,onSaved}:{matchId:string;onC
     </>:<>{error&&<p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button className="secondary" type="button" onClick={()=>void load()}>再読み込み</button><button className="primary" type="button" onClick={onClose}>閉じる</button></div></>}
   </FeedbackDialog>;
 }
-export function FeedbackJournal({onClose,onSelect,availableMatches,viewerName}:{onClose:()=>void;onSelect:(matchId:string)=>void;availableMatches:{matchId:string;context:FeedbackContext}[];viewerName:string}){
-  const [hasMore,setHasMore]=useState(false),[loadingMore,setLoadingMore]=useState(false);
+export function FeedbackJournal({onSelect,availableMatches,viewerName}:{onSelect:(matchId:string)=>void;availableMatches:{matchId:string;context:FeedbackContext}[];viewerName:string}){
   const [entries,setEntries]=useState<JournalEntry[]|null>(null),[error,setError]=useState(''),[retry,setRetry]=useState(0);
-  useEffect(()=>{const controller=new AbortController();setError('');setEntries(null);void request<{feedback:JournalEntry[];hasMore?:boolean}>('/api/feedback','GET',undefined,controller.signal).then(data=>{setEntries(data.feedback);setHasMore(Boolean(data.hasMore));}).catch(failure=>{if(!controller.signal.aborted)setError((failure as Error).message);});return()=>controller.abort();},[retry]);
-  async function more(){setLoadingMore(true);try{const data=await request<{feedback:JournalEntry[];hasMore?:boolean}>('/api/feedback?more=1');setEntries(current=>[...(current||[]),...data.feedback.filter(entry=>!current?.some(old=>old.matchId===entry.matchId))]);setHasMore(Boolean(data.hasMore));}catch(e){setError((e as Error).message);}finally{setLoadingMore(false);}}
-  return <FeedbackDialog title="自分のフィードバック" close={onClose}>
-    <section className="feedback-available" aria-labelledby="feedback-available-heading"><h3 id="feedback-available-heading">出場した試合から書く</h3>
-      {availableMatches.length?<ul className="feedback-journal-list">{availableMatches.map(entry=><li key={entry.matchId}><button type="button" className="feedback-journal-entry" onClick={()=>onSelect(entry.matchId)}><MatchContext context={entry.context}/><span className="feedback-journal-open">フィードバックを書く・編集する ↗</span></button></li>)}</ul>:<div className="feedback-empty"><h3>出場した試合がまだありません</h3><p>試合を記録するとき、出場選手に「{viewerName}」を選んでください。<br/>名簿に同じ名前が複数ある場合も、アカウントに結び付いた選手の記録だけが対象です。</p></div>}
-    </section>
-    <h3 className="feedback-saved-heading">保存した振り返り</h3>
-    {error?<><p className="form-error" role="alert">{error}</p><button type="button" className="secondary" onClick={()=>setRetry(value=>value+1)}>再読み込み</button></>:entries===null?<p className="feedback-loading" role="status">読み込んでいます…</p>:entries.length?<ul className="feedback-journal-list">{entries.map(entry=><li key={entry.matchId}><button type="button" className="feedback-journal-entry" onClick={()=>onSelect(entry.matchId)}><MatchContext context={entry.context} archived={entry.archived}/><span className="feedback-journal-open">振り返りを開く ↗</span></button></li>)}</ul>:<div className="feedback-empty"><h3>振り返りはまだありません</h3><p>上の出場試合からフィードバックを書けます。<br/>保存した振り返りは、この一覧で読み返せます。</p></div>}
-    {hasMore&&entries&&<button className="secondary" disabled={loadingMore} onClick={()=>void more()}>{loadingMore?'読み込み中…':'もっと見る'}</button>}
-  </FeedbackDialog>;
+  useEffect(()=>{
+    const controller=new AbortController();setError('');setEntries(null);
+    async function load(){
+      try{
+        const saved=new Map<string,JournalEntry>();let more=false;
+        do{
+          const data:{feedback:JournalEntry[];hasMore?:boolean}=await request<{feedback:JournalEntry[];hasMore?:boolean}>(more?'/api/feedback?more=1':'/api/feedback','GET',undefined,controller.signal);
+          for(const entry of data.feedback)saved.set(entry.matchId,entry);
+          more=Boolean(data.hasMore);
+        }while(more);
+        if(!controller.signal.aborted)setEntries([...saved.values()]);
+      }catch(failure){if(!controller.signal.aborted)setError((failure as Error).message);}
+    }
+    void load();return()=>controller.abort();
+  },[retry]);
+  const savedIds=new Set((entries||[]).map(entry=>entry.matchId));
+  const pending=[...new Map(availableMatches.map(entry=>[entry.matchId,entry])).values()].filter(entry=>!savedIds.has(entry.matchId)).sort((a,b)=>b.context.date.localeCompare(a.context.date)||a.matchId.localeCompare(b.matchId));
+  const saved=[...(entries||[])].sort((a,b)=>b.context.date.localeCompare(a.context.date)||a.matchId.localeCompare(b.matchId));
+  return <section className="feedback-workspace" aria-label="自分のフィードバック">
+    <div className="feedback-workspace-toolbar"><p className="feedback-private">本人だけに表示・チームの共有メモには入りません</p><button type="button" className="secondary" disabled={entries===null&&!error} onClick={()=>setRetry(value=>value+1)}>最新の状態に更新</button></div>
+    {error?<div className="error-banner" role="alert"><span>{error}</span><button type="button" onClick={()=>setRetry(value=>value+1)}>再読み込み</button></div>:entries===null?<p className="feedback-loading" role="status">振り返りの記入状況を確認しています…</p>:<div className="feedback-workspace-grid">
+      <section className="panel feedback-workspace-section" aria-labelledby="feedback-pending-heading"><div className="section-heading"><div><h2 id="feedback-pending-heading">未記入 <span className="count-pill">{pending.length}</span></h2><p>自分が出場した、これから振り返りを書ける試合。</p></div></div>
+        {pending.length?<ul className="feedback-journal-list">{pending.map(entry=><li key={entry.matchId}><button type="button" className="feedback-journal-entry" onClick={()=>onSelect(entry.matchId)}><MatchContext context={entry.context}/><span className="feedback-journal-open">振り返りを書く ↗</span></button></li>)}</ul>:<div className="feedback-empty"><h3>{availableMatches.length?'未記入の試合はありません':'出場した試合がまだありません'}</h3><p>{availableMatches.length?'出場した試合の振り返りはすべて記入済みです。':'試合の出場選手に「'+viewerName+'」を選ぶと、ここに表示されます。'}</p></div>}
+      </section>
+      <section className="panel feedback-workspace-section" aria-labelledby="feedback-written-heading"><div className="section-heading"><div><h2 id="feedback-written-heading">記入済み <span className="count-pill">{saved.length}</span></h2><p>保存した振り返りを読み返す・編集する。</p></div></div>
+        {saved.length?<ul className="feedback-journal-list">{saved.map(entry=><li key={entry.matchId}><button type="button" className="feedback-journal-entry" onClick={()=>onSelect(entry.matchId)}><MatchContext context={entry.context} archived={entry.archived}/><span className="feedback-journal-open">読み返す・編集する ↗</span></button></li>)}</ul>:<div className="feedback-empty"><h3>保存した振り返りはまだありません</h3><p>未記入の試合から振り返りを保存すると、ここに移動します。</p></div>}
+      </section>
+    </div>}
+  </section>;
 }
