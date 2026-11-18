@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import ts from 'typescript';
 import {createHash} from 'node:crypto';
 import {initializeTestEnvironment} from '@firebase/rules-unit-testing';
-import {doc,setDoc,getDocs,collection,Timestamp} from 'firebase/firestore';
+import {doc,setDoc,getDocs,collection,Timestamp,updateDoc,serverTimestamp} from 'firebase/firestore';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const url=code=>'data:text/javascript;base64,'+Buffer.from(code).toString('base64');
 function compile(file){return ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;}
@@ -71,4 +71,16 @@ test('ロック前に始まった振り返り取得は、同じ人が再解除�
   store.setUnlocked(false);store.setUnlocked(true);release();
   await assert.rejects(pending,e=>e.status===401);
   const current=await call('/api/feedback');assert.equal(current.feedback.length,1);
+});
+
+test('振り返りは各欄1000字までで、3欄合計3000字と絵文字を保持し、直接書込みの超過も拒否する',async()=>{
+ const {input}=await fixture();await call('/api/matches','POST',input);const path='/api/matches/'+input.id+'/feedback';
+ const body={version:0,goodPoints:'あ'.repeat(1000),improvements:'い'.repeat(1000),nextAction:'う'.repeat(1000)};
+ await call(path,'PUT',body);const saved=await call(path);assert.equal(saved.feedback.goodPoints.length,1000);assert.equal(saved.feedback.improvements.length,1000);assert.equal(saved.feedback.nextAction.length,1000);
+ for(const key of ['goodPoints','improvements','nextAction']){
+  await assert.rejects(call(path,'PUT',{...body,version:1,[key]:'あ'.repeat(1001)}),/1000文字/);
+  await assert.rejects(updateDoc(doc(globalThis.__storeDb,'privateUsers','self','feedback',input.id),{[key]:'あ'.repeat(1001),version:2,updatedAt:serverTimestamp()}),e=>e.code==='permission-denied');
+ }
+ await call(path,'PUT',{version:1,goodPoints:'😀'.repeat(1000),improvements:'',nextAction:''});assert.equal(Array.from((await call(path)).feedback.goodPoints).length,1000);
+ await assert.rejects(call(path,'PUT',{version:2,goodPoints:'😀'.repeat(1001),improvements:'',nextAction:''}),/1000文字/);
 });

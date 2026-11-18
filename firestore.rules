@@ -155,9 +155,10 @@ service cloud.firestore {
       allow update: if member() && keyShape(request.resource.data,key) && changedKey(request.resource.data,key);
       allow delete: if false;
     }
+    function noteText(s) { return s is string && s.matches('(?s).{0,1000}'); }
     function noteShape(d,uid,id) {
       return d.keys().hasOnly(['matchId','ownerId','ownerMemberId','context','goodPoints','improvements','nextAction','version','createdAt','updatedAt'])
-        && d.matchId == id && d.ownerId == uid && text(d.goodPoints,2000) && text(d.improvements,2000) && text(d.nextAction,2000)
+        && d.matchId == id && d.ownerId == uid && noteText(d.goodPoints) && noteText(d.improvements) && noteText(d.nextAction)
         && d.goodPoints.size() + d.improvements.size() + d.nextAction.size() > 0
         && d.context is map && d.context.keys().hasOnly(['date','category','event','discipline','sideA','sideB','scores'])
         && text(d.context.date,10) && text(d.context.category,20) && text(d.context.event,100) && text(d.context.discipline,20)

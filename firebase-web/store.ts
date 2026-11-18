@@ -173,7 +173,7 @@ async function feedback(id:string,method:string,body:Row):Promise<Row>{
     if(method==='DELETE'){if(!old)throw conflict();tx.delete(ref);return;}
     if(!old&&!participates(m.exists()?m.data():null,actor.memberId))throw new TeamError('出場した本人だけが振り返りを書けます。',403);
     const context=old?.context??encodeMatch(await contextOf(decodeMatch(m.data()!)));
-    const fields:Row={};for(const key of ['goodPoints','improvements','nextAction']){if(typeof body[key]!=='string'||body[key].length>2000)throw new TeamError('各欄は2000文字以内で入力してください。');fields[key]=body[key].trim();}
+    const fields:Row={};for(const key of ['goodPoints','improvements','nextAction']){if(typeof body[key]!=='string'||Array.from(body[key]).length>1000)throw new TeamError('各欄は1000文字以内で入力してください。');fields[key]=body[key].trim();}
     if(!Object.values(fields).some(Boolean))throw new TeamError('いずれかの欄に振り返りを入力してください。');
     tx.set(ref,{...fields,matchId:id,ownerId:actor.id,ownerMemberId:actor.memberId,context,version:(old?.version??0)+1,createdAt:old?.createdAt??serverTimestamp(),updatedAt:serverTimestamp()});
   });

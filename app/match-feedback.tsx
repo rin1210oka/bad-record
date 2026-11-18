@@ -24,6 +24,8 @@ function MatchContext({context,archived=false}:{context:FeedbackContext;archived
 export function MatchFeedbackModal({matchId,onClose,onSaved}:{matchId:string;onClose:()=>void;onSaved:(message:string)=>void}){
   const [record,setRecord]=useState<FeedbackResponse|null>(null),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(''),[deleteConfirm,setDeleteConfirm]=useState(false);
   const [goodPoints,setGoodPoints]=useState(''),[improvements,setImprovements]=useState(''),[nextAction,setNextAction]=useState('');
+  const counts=[goodPoints,improvements,nextAction].map(value=>Array.from(value).length);
+  const overLimit=counts.some(count=>count>1000);
   const endpoint='/api/matches/'+encodeURIComponent(matchId)+'/feedback';
   const load=useCallback(async(signal?:AbortSignal)=>{
     setLoading(true);setError('');
@@ -35,7 +37,7 @@ export function MatchFeedbackModal({matchId,onClose,onSaved}:{matchId:string;onC
   const dirty=Boolean(record)&&(goodPoints!==(record?.feedback?.goodPoints||'')||improvements!==(record?.feedback?.improvements||'')||nextAction!==(record?.feedback?.nextAction||''));
   const close=()=>{if(busy)return;if(dirty&&!window.confirm('保存していない振り返りがあります。保存せずに閉じますか？'))return;onClose();};
   async function save(event:React.FormEvent){
-    event.preventDefault();if(!record||loading||busy)return;setBusy(true);setError('');
+    event.preventDefault();if(!record||loading||busy||overLimit)return;setBusy(true);setError('');
     try{await request<FeedbackResponse>(endpoint,'PUT',{version:record.feedback?.version??0,goodPoints,improvements,nextAction});onSaved('自分の振り返りを保存しました。');}
     catch(failure){setError((failure as Error).message);}finally{setBusy(false);}
   }
@@ -48,13 +50,14 @@ export function MatchFeedbackModal({matchId,onClose,onSaved}:{matchId:string;onC
     {loading?<p className="feedback-loading" role="status">自分の振り返りを読み込んでいます…</p>:record?<>
       <MatchContext context={record.context} archived={record.archived}/>
       {record.archived&&<p className="form-hint">試合一覧から削除された後も、保存した自分の振り返りは残ります。</p>}
+      <p className="form-hint">各欄1,000字まで。書ける欄だけでも保存できます。</p>
       <form onSubmit={save}><fieldset disabled={busy} className="form-body feedback-fields">
-        <label>よかったこと<textarea rows={3} maxLength={2000} value={goodPoints} onChange={event=>setGoodPoints(event.target.value)} placeholder="できたプレーや、続けたいこと"/></label>
-        <label>改善したいこと<textarea rows={3} maxLength={2000} value={improvements} onChange={event=>setImprovements(event.target.value)} placeholder="困った場面や、見直したいこと"/></label>
-        <label>次に取り組むこと<textarea rows={3} maxLength={2000} value={nextAction} onChange={event=>setNextAction(event.target.value)} placeholder="次の練習や試合で意識すること"/></label>
-      </fieldset>{error&&<p className="form-error" role="alert">{error}</p>}
+        <label>よかったこと<textarea rows={3} aria-invalid={counts[0]>1000||undefined} value={goodPoints} onChange={event=>setGoodPoints(event.target.value)} placeholder="できたプレーや、続けたいこと"/><small className={counts[0]>1000?'feedback-character-count is-error':'feedback-character-count'}>{counts[0]} / 1,000字</small></label>
+        <label>改善したいこと<textarea rows={3} aria-invalid={counts[1]>1000||undefined} value={improvements} onChange={event=>setImprovements(event.target.value)} placeholder="困った場面や、見直したいこと"/><small className={counts[1]>1000?'feedback-character-count is-error':'feedback-character-count'}>{counts[1]} / 1,000字</small></label>
+        <label>次に取り組むこと<textarea rows={3} aria-invalid={counts[2]>1000||undefined} value={nextAction} onChange={event=>setNextAction(event.target.value)} placeholder="次の練習や試合で意識すること"/><small className={counts[2]>1000?'feedback-character-count is-error':'feedback-character-count'}>{counts[2]} / 1,000字</small></label>
+      </fieldset>{overLimit&&<p className="form-error" role="alert">1,000字を超えた欄があります。文章は自動で削りません。各欄1,000字以内に調整してから保存してください。</p>}{error&&<p className="form-error" role="alert">{error}</p>}
         {deleteConfirm&&<div className="feedback-delete-confirm"><p>この振り返りを削除しますか？</p><button type="button" className="text-button" disabled={busy} onClick={()=>setDeleteConfirm(false)}>戻る</button><button type="button" className="text-button member-delete-button" disabled={busy} onClick={()=>void remove()}>削除を確定</button></div>}
-        <div className="form-actions feedback-form-actions">{record.feedback&&!deleteConfirm&&<button type="button" className="text-button member-delete-button" disabled={busy} onClick={()=>setDeleteConfirm(true)}>振り返りを削除</button>}<button type="button" className="secondary" disabled={busy} onClick={close}>閉じる</button><button className="primary" type="submit" disabled={busy||![goodPoints,improvements,nextAction].some(value=>value.trim())}>{busy?'保存中…':'振り返りを保存'}</button></div>
+        <div className="form-actions feedback-form-actions">{record.feedback&&!deleteConfirm&&<button type="button" className="text-button member-delete-button" disabled={busy} onClick={()=>setDeleteConfirm(true)}>振り返りを削除</button>}<button type="button" className="secondary" disabled={busy} onClick={close}>閉じる</button><button className="primary" type="submit" disabled={busy||overLimit||![goodPoints,improvements,nextAction].some(value=>value.trim())}>{busy?'保存中…':'振り返りを保存'}</button></div>
       </form>
     </>:<>{error&&<p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button className="secondary" type="button" onClick={()=>void load()}>再読み込み</button><button className="primary" type="button" onClick={onClose}>閉じる</button></div></>}
   </FeedbackDialog>;
