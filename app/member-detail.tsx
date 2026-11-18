@@ -1,3 +1,5 @@
+import MatchPeopleFilters from './match-people-filters';
+import {matchesPeople,type MatchPeople} from '../lib/match-search';
 import { useEffect, useRef, useState } from 'react';
 import { memberMatchHistory, summarizeMemberMatches } from '../lib/member-stats';
 import type { MemberMatch } from '../lib/member-stats';
@@ -11,6 +13,7 @@ export default function MemberDetail({ member, members, matches, onClose, onEdit
   member: Member; members: Member[]; matches: RecordedMatch[]; onClose: () => void; onEdit: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const [partnerId,setPartnerId]=useState(''),[opponent,setOpponent]=useState('');
   const [category, setCategory] = useState('all');
   const [historyYear, setHistoryYear] = useState('all');
   useEffect(() => {
@@ -21,7 +24,9 @@ export default function MemberDetail({ member, members, matches, onClose, onEdit
   const currentStage = memberStage(member);
   const availableYears = [...new Set([currentStage.schoolYear, ...memberMatchHistory(matches, member.id).map(item => schoolYear(item.match.date))])].sort((a, b) => b - a);
   const datedMatches = historyYear === 'all' ? matches : matches.filter(match => schoolYear(match.date) === Number(historyYear));
-  const history = memberMatchHistory(datedMatches, member.id, category);
+  const allHistory=memberMatchHistory(matches,member.id);
+  const peopleOf=(entry:typeof allHistory[number]):MatchPeople=>({ownIds:entry.ownIds,oppositeIds:entry.oppositeIds,opponents:entry.opponents});
+  const history = memberMatchHistory(datedMatches, member.id, category).filter(entry=>matchesPeople(peopleOf(entry),partnerId,opponent));
   const stats = summarizeMemberMatches(history);
   const nameOf = (id: string) => members.find(item => item.id === id)?.name || '登録済みの選手';
   return <dialog className="modal member-detail" ref={dialog} onCancel={event => { event.preventDefault(); onClose(); }} aria-labelledby="member-detail-title">
@@ -29,6 +34,8 @@ export default function MemberDetail({ member, members, matches, onClose, onEdit
     <div className="profile-heading"><span className="profile-avatar" aria-hidden="true">{member.name.slice(0, 1)}</span><div><h3>{member.name}{member.deletedAt && <span className="member-deleted-badge">削除済み</span>}</h3><p>{member.group || '所属先の登録なし'}{!member.deletedAt && <span className={`member-status ${member.status}`}>{member.status === 'active' ? '候補に表示' : '候補から非表示'}</span>}</p><p className="profile-cohort-line"><span className="type-badge classification-badge">{memberClassification(member)}</span>{member.affiliation === 'internal' && currentStage.grade !== null && <span className="type-badge">学年：{currentStage.label}</span>}<span>{currentStage.schoolYear}年度</span></p></div>{!member.deletedAt && <button className="secondary profile-edit" type="button" onClick={onEdit}>登録情報を編集</button>}</div>
     {member.deletedAt && <p className="profile-deleted-note">この選手は削除済みです。過去の試合・成績は引き続き確認できます。メンバー管理の「削除済みの選手」から復元できます。</p>}
     <div className="profile-section-title"><h3>出場成績</h3><div className="profile-filters"><label className="profile-filter">年度<select value={historyYear} onChange={event => setHistoryYear(event.target.value)} aria-label="選手成績の年度"><option value="all">すべての年度</option>{availableYears.map(year => <option key={year} value={year}>{year}年度</option>)}</select></label><label className="profile-filter">試合区分<select value={category} onChange={event => setCategory(event.target.value)} aria-label="選手成績の試合区分"><option value="all">すべての区分</option>{['公式戦', '練習試合', 'ゲーム練'].map(value => <option key={value}>{value}</option>)}</select></label></div></div>
+    <MatchPeopleFilters people={allHistory.map(peopleOf)} members={members} memberId={member.id} partnerId={partnerId} opponent={opponent} onPartner={setPartnerId} onOpponent={setOpponent}/>
+    {(partnerId||opponent)&&<button className="text-button" type="button" onClick={()=>{setPartnerId('');setOpponent('');}}>ペア・対戦相手の絞り込みを解除</button>}
     <section className="profile-stats" aria-label="選手の成績"><div><span>出場</span><strong>{stats.total}<small>試合</small></strong></div><div><span>勝ち</span><strong>{stats.wins}<small>勝</small></strong></div><div><span>負け</span><strong>{stats.losses}<small>敗</small></strong></div><div><span>引き分け</span><strong>{stats.draws}<small>分</small></strong></div><div><span>勝率</span><strong>{stats.winRate ?? '—'}<small>%</small></strong></div></section>
     <p className="profile-hint">部内の対戦も含めて、この選手側の勝敗・得点を表示しています。勝率は引き分けを除いて計算します。</p>
     <div className="profile-section-title history-heading"><h3>試合履歴</h3><span>{history.length} 試合</span></div>
@@ -40,7 +47,7 @@ export default function MemberDetail({ member, members, matches, onClose, onEdit
       {match.event && <p className="profile-match-event">{match.event}</p>}
       <div className="profile-match-main"><div className="profile-match-players"><strong className="profile-player-names">{ownIds.map(id => <span key={id}>{nameOf(id)}</span>)}</strong><span>vs</span><strong className="profile-player-names">{oppositeIds.length ? oppositeIds.map(id => <span key={id}>{nameOf(id)}</span>) : opponents.map((name, index) => <span key={index}>{name}</span>)}</strong></div><div className="profile-result"><span className={"result-tag " + outcome}>{drawn ? '引き分け' : won ? 'WIN' : 'LOSE'}</span><strong>{gamesWon} − {gamesLost}</strong></div></div>
       <div className="score-detail">{scores.map(([own, other], index) => <span key={index}><small>セット{index + 1}</small> {own}–{other}</span>)}</div>{match.memo && <p className="match-memo">{match.memo}</p>}
-    </article>; })}</div> : <div className="profile-empty"><span aria-hidden="true">◇</span><h4>{category === 'all' && historyYear === 'all' ? 'まだ試合の記録がありません' : 'この条件の試合はまだありません'}</h4><p>{category === 'all' && historyYear === 'all' ? 'この選手が出場した試合を登録すると、ここに表示されます。' : '年度や試合区分を切り替えて、成績を確認できます。'}</p></div>}
+    </article>; })}</div> : <div className="profile-empty"><span aria-hidden="true">◇</span><h4>{category === 'all' && historyYear === 'all' && !partnerId && !opponent ? 'まだ試合の記録がありません' : 'この条件の試合はまだありません'}</h4><p>{category === 'all' && historyYear === 'all' && !partnerId && !opponent ? 'この選手が出場した試合を登録すると、ここに表示されます。' : '年度・試合区分・ペア相手・対戦相手の条件を変えてください。'}</p></div>}
     <div className="form-actions"><button className="secondary" type="button" onClick={onClose}>閉じる</button></div>
   </dialog>;
 }

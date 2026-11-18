@@ -1,8 +1,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function google() { return request.auth != null && request.auth.token.firebase.sign_in_provider == 'google.com' && request.auth.token.email_verified == true; }
-    function member() { return google() && get(/databases/$(database)/documents/memberships/$(request.auth.uid)).data.active == true; }
+    function verifiedEmail() { return request.auth != null && request.auth.token.firebase.sign_in_provider == 'password' && request.auth.token.email_verified == true; }
+    function member() { return verifiedEmail() && get(/databases/$(database)/documents/memberships/$(request.auth.uid)).data.active == true; }
     function own(uid) { return member() && request.auth.uid == uid; }
     function hash(s) { return hashing.sha256(s).toHexString().lower(); }
     function text(s,n) { return s is string && s.size() <= n; }
@@ -23,13 +23,13 @@ service cloud.firestore {
     function joined(uid,d) {
       let gate = get(/databases/$(database)/documents/joinKeys/$(d.joinKey)).data;
       let player = getAfter(/databases/$(database)/documents/players/$(d.playerId)).data;
-      return google() && request.auth.uid == uid && d.keys().hasOnly(['playerId','active','joinKey','createdAt'])
+      return verifiedEmail() && request.auth.uid == uid && d.keys().hasOnly(['playerId','active','joinKey','createdAt'])
         && d.active == true && d.createdAt == request.time && d.playerId == 'self-' + uid
         && gate.enabled == true && gate.expiresAt > request.time && player.ownerUid == uid;
     }
     function validGate(key) { let g = get(/databases/$(database)/documents/joinKeys/$(key)).data; return g.enabled == true && g.expiresAt > request.time; }
     function invited() {
-      return google() && !exists(/databases/$(database)/documents/memberships/$(request.auth.uid)) && exists(/databases/$(database)/documents/joinSessions/$(request.auth.uid))
+      return verifiedEmail() && !exists(/databases/$(database)/documents/memberships/$(request.auth.uid)) && exists(/databases/$(database)/documents/joinSessions/$(request.auth.uid))
         && get(/databases/$(database)/documents/joinSessions/$(request.auth.uid)).data.createdAt + duration.value(1,'h') > request.time
         && validGate(get(/databases/$(database)/documents/joinSessions/$(request.auth.uid)).data.joinKey);
     }
@@ -47,13 +47,13 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/players/$(d.playerId)).data.ownerUid == uid;
     }
     match /joinSessions/{uid} {
-      allow get: if google() && request.auth.uid == uid;
-      allow create, update: if google() && request.auth.uid == uid && !exists(/databases/$(database)/documents/memberships/$(uid))
+      allow get: if verifiedEmail() && request.auth.uid == uid;
+      allow create, update: if verifiedEmail() && request.auth.uid == uid && !exists(/databases/$(database)/documents/memberships/$(uid))
         && request.resource.data.keys().hasOnly(['joinKey','createdAt']) && request.resource.data.createdAt == request.time && validGate(request.resource.data.joinKey);
       allow delete, list: if false;
     }
     match /linkRequests/{uid} {
-      allow get: if google() && (request.auth.uid == uid || member() && resource.data.approverUid == request.auth.uid);
+      allow get: if verifiedEmail() && (request.auth.uid == uid || member() && resource.data.approverUid == request.auth.uid);
       allow list: if member() && resource.data.approverUid == request.auth.uid;
       allow create: if invited() && request.auth.uid == uid && !exists(/databases/$(database)/documents/memberships/$(uid))
         && request.resource.data.keys().hasOnly(['uid','playerId','playerName','approverUid','joinKey','status','createdAt','decidedAt'])
@@ -75,17 +75,17 @@ service cloud.firestore {
     }
     match /joinKeys/{key} { allow read, write: if false; }
     match /memberships/{uid} {
-      allow get: if google() && request.auth.uid == uid;
+      allow get: if verifiedEmail() && request.auth.uid == uid;
       allow create: if joined(uid,request.resource.data) && !pendingLink(uid) || linkedMembership(uid,request.resource.data);
       allow update, delete, list: if false;
     }
     match /players/{id} {
-      allow get: if member() || invited() && resource.data.deletedAt == null || google() && id == 'self-' + request.auth.uid;
+      allow get: if member() || invited() && resource.data.deletedAt == null || verifiedEmail() && id == 'self-' + request.auth.uid;
       allow list: if member() || invited() && resource.data.deletedAt == null;
       allow create: if playerShape(request.resource.data,id) && named(request.resource.data,id)
         && request.resource.data.version == 1 && request.resource.data.createdAt == request.time && request.resource.data.deletedAt == null
         && (member() && request.resource.data.ownerUid == null
-          || google() && id == 'self-' + request.auth.uid && request.resource.data.ownerUid == request.auth.uid
+          || verifiedEmail() && id == 'self-' + request.auth.uid && request.resource.data.ownerUid == request.auth.uid
             && getAfter(/databases/$(database)/documents/memberships/$(request.auth.uid)).data.playerId == id);
       allow update: if member() && playerShape(request.resource.data,id) && named(request.resource.data,id)
         && (request.resource.data.ownerUid == resource.data.ownerUid || resource.data.ownerUid == null && resource.data.deletedAt == null
@@ -95,9 +95,9 @@ service cloud.firestore {
       allow delete: if false;
     }
     match /playerNames/{key} {
-      allow get: if member() || invited() || google() && !exists(/databases/$(database)/documents/playerNames/$(key));
+      allow get: if member() || invited() || verifiedEmail() && !exists(/databases/$(database)/documents/playerNames/$(key));
       allow list: if false;
-      allow create: if google() && request.resource.data.keys().hasOnly(['playerId','key']) && key == hash(request.resource.data.key)
+      allow create: if verifiedEmail() && request.resource.data.keys().hasOnly(['playerId','key']) && key == hash(request.resource.data.key)
         && getAfter(/databases/$(database)/documents/players/$(request.resource.data.playerId)).data.nameLock == key
         && getAfter(/databases/$(database)/documents/players/$(request.resource.data.playerId)).data.deletedAt == null
         && (member() || getAfter(/databases/$(database)/documents/players/$(request.resource.data.playerId)).data.ownerUid == request.auth.uid);

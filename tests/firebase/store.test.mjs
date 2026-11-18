@@ -11,6 +11,7 @@ function compile(file){return ts.transpileModule(fs.readFileSync(file,'utf8'),{c
 const names=url(compile('lib/member-name.ts')),cohort=url(compile('lib/member-cohort.ts'));
 const domain=url(compile('lib/team-domain.ts').replaceAll("'./member-name'",JSON.stringify(names)).replaceAll("'./member-cohort'",JSON.stringify(cohort)));
 const codec=url(compile('firebase-web/codec.ts'));
+const search=url(compile('lib/match-search.ts').replaceAll("'./member-name'",JSON.stringify(names)));
 const firestoreReal=import.meta.resolve('firebase/firestore');
 const firestore=url('export * from '+JSON.stringify(firestoreReal)+';import {getDocs as realGetDocs} from '+JSON.stringify(firestoreReal)+';export async function getDocs(q){const value=await realGetDocs(q);const hold=globalThis.__pauseStoreRead;if(hold)await hold();return value;}');
 let env,store;
@@ -19,17 +20,17 @@ after(async()=>{await env?.cleanup();delete globalThis.__storeDb;delete globalTh
 beforeEach(async()=>{
   delete globalThis.__pauseStoreRead;
   await env.clearFirestore();
-  globalThis.__storeDb=env.authenticatedContext('self',{email:'self@example.invalid',email_verified:true,firebase:{sign_in_provider:'google.com'}}).firestore();
+  globalThis.__storeDb=env.authenticatedContext('self',{email:'self@example.invalid',email_verified:true,firebase:{sign_in_provider:'password'}}).firestore();
   globalThis.__storeAuth={currentUser:{uid:'self',email:'self@example.invalid'}};
   const firebase=url('export const db=globalThis.__storeDb;export const auth=globalThis.__storeAuth;');
-  store=await import(url(compile('firebase-web/store.ts').replaceAll("'firebase/firestore'",JSON.stringify(firestore)).replaceAll("'./firebase'",JSON.stringify(firebase)).replaceAll("'../lib/team-domain'",JSON.stringify(domain)).replaceAll("'../lib/member-cohort'",JSON.stringify(cohort)).replaceAll("'./codec'",JSON.stringify(codec))+'\n//'+crypto.randomUUID()));
+  store=await import(url(compile('firebase-web/store.ts').replaceAll("'firebase/firestore'",JSON.stringify(firestore)).replaceAll("'./firebase'",JSON.stringify(firebase)).replaceAll("'../lib/team-domain'",JSON.stringify(domain)).replaceAll("'../lib/member-cohort'",JSON.stringify(cohort)).replaceAll("'./codec'",JSON.stringify(codec)).replaceAll("'../lib/match-search'",JSON.stringify(search))+'\n//'+crypto.randomUUID()));
   await env.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'joinKeys',hash('random-test-phrase')),{enabled:true,expiresAt:Timestamp.fromMillis(Date.now()+86400000)}));
 });
 const profile={name:'アオキ',group:'',status:'active',hasTeamHistory:true,stageMode:'cohort',cohortYear:2026,generation:80};
 async function join(){await store.joinTeam('random-test-phrase',profile);store.setUnlocked(true);}
 const call=(path,method='GET',body)=>store.firebaseRequest(path,method,body);
 async function fixture(){await join();const {member}=await call('/api/members','POST',{...profile,name:'イノウエ'});const input={id:crypto.randomUUID(),date:'2026-11-04',category:'ゲーム練',event:'',discipline:'シングルス',opponentType:'internal',sideAIds:['self-self'],sideBIds:[member.id],opponents:[],scores:[[15,14],[2,5],[6,6],[4,1]],memo:''};return {member,input};}
-test('自分の登録からチーム取得、Google UIDとのひも付け、端末ロックを実保存で確認',async()=>{
+test('自分の登録からチーム取得、Firebase UIDとのひも付け、端末ロックを実保存で確認',async()=>{
   await join();const data=await call('/api/team');assert.equal(data.members.length,1);assert.equal(data.viewer.memberId,'self-self');
   store.setUnlocked(false);await assert.rejects(call('/api/team'),/ロック/);
 });
@@ -53,7 +54,7 @@ test('振り返りは競合検出付きで保存し、試合削除後も履歴�
   await assert.rejects(call(path,'PUT',{version:0,goodPoints:'古い版',improvements:'',nextAction:''}),/更新/);
   await call('/api/matches/'+input.id,'DELETE',{version:1});const data=await call('/api/team');assert.equal(data.matches.length,0);
   const feedback=await call(path);assert.equal(feedback.feedback.goodPoints,'よかった');assert.equal(feedback.archived,true);assert.deepEqual(feedback.context.scores,input.scores);
-  const journal=await call('/api/feedback');assert.equal(journal.feedback.length,1);assert.equal(journal.feedback[0].archived,true);
+  const journal=await call('/api/feedback');assert.equal(journal.feedback.length,1);assert.equal(journal.feedback[0].archived,true);assert.deepEqual(journal.feedback[0].people,{ownIds:input.sideAIds,oppositeIds:input.sideBIds,opponents:[]});
   await call(path,'DELETE',{version:1});assert.equal((await call('/api/feedback')).feedback.length,0);
 });
 test('生年月日を保存せず、日本の年度区切りと将来の卒業表示を維持',async()=>{

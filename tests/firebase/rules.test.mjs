@@ -6,8 +6,8 @@ import {initializeTestEnvironment,assertSucceeds,assertFails} from '@firebase/ru
 import {doc,setDoc,getDoc,getDocs,collection,updateDoc,deleteDoc,writeBatch,runTransaction,Timestamp,serverTimestamp} from 'firebase/firestore';
 const hash=s=>createHash('sha256').update(s).digest('hex');
 let env;
-const google={email:'example@example.invalid',email_verified:true,firebase:{sign_in_provider:'google.com'}};
-const client=id=>env.authenticatedContext(id,google).firestore();
+const verified={email:'example@example.invalid',email_verified:true,firebase:{sign_in_provider:'password'}};
+const client=id=>env.authenticatedContext(id,verified).firestore();
 const name='アオキ';
 function player(id,ownerUid=null){const nameKey=JSON.stringify([name.toLowerCase(),'']);return {id,ownerUid,name,group:'',status:'active',affiliation:'internal',stageMode:'cohort',cohortYear:2026,internalHistory:true,generation:80,gradeOverrides:{},nameKey,nameLock:hash(nameKey),version:1,deletedAt:null,createdAt:serverTimestamp(),updatedAt:serverTimestamp()};}
 function match(){return {id:'m',date:'2026-11-04',category:'ゲーム練',event:'',discipline:'シングルス',opponentType:'internal',sideAIds:['pa'],sideBIds:['pb'],opponents:[],scores:['15:9','8:11','7:7','4:1'],memo:'',memberSnapshots:{},canonical:'test-match',matchKey:hash('test-match'),separate:false,version:1,createdBy:'a',createdByName:name,updatedBy:'a',createdAt:serverTimestamp(),updatedAt:serverTimestamp(),deletedAt:null};}
@@ -23,10 +23,11 @@ beforeEach(async()=>{
     await b.commit();
   });
 });
-test('未認証・Google認証だけ・別プロバイダーは共有データを読めない',async()=>{
+test('未認証・メール未確認・参加前・旧Googleログインでは共有データを読めない',async()=>{
   await assertFails(getDocs(collection(env.unauthenticatedContext().firestore(),'players')));
   await assertFails(getDocs(collection(client('outsider'),'players')));
-  await assertFails(getDocs(collection(env.authenticatedContext('a',{email_verified:true,firebase:{sign_in_provider:'password'}}).firestore(),'players')));
+  await assertFails(getDocs(collection(env.authenticatedContext('a',{email_verified:true,firebase:{sign_in_provider:'google.com'}}).firestore(),'players')));
+  await assertFails(getDocs(collection(env.authenticatedContext('a',{email_verified:false,firebase:{sign_in_provider:'password'}}).firestore(),'players')));
   await assertSucceeds(getDocs(collection(client('a'),'players')));
 });
 test('正しい合言葉なら本人の参加情報・選手・名前予約をまとめて作成できる',async()=>{

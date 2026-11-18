@@ -11,6 +11,8 @@ type Props = {
   onChange: (id: string) => void;
   excludedIds?: string[];
   required?: boolean;
+  compact?: boolean;
+  showSelection?: boolean;
 };
 
 const searchKey = (value: string) => normalizeMemberName(value).toLocaleLowerCase('ja-JP');
@@ -19,12 +21,13 @@ const playerDescription = (member: Player) => {
   return [member.group || '所属先の登録なし', memberClassification(member), ...(member.affiliation === 'internal' && stage.grade !== null ? [stage.label] : [])].join('・');
 };
 
-export default function PlayerSearch({ label, members, value, onChange, excludedIds = [], required = false }: Props) {
+export default function PlayerSearch({ label, members, value, onChange, excludedIds = [], required = false, compact = false, showSelection = false }: Props) {
   const id = useId(), listId = `${id}-list`, hintId = `${id}-hint`;
   const root = useRef<HTMLDivElement>(null), input = useRef<HTMLInputElement>(null);
   const composing = useRef(false), preserveDraft = useRef(false);
   const selected = members.find(member => member.id === value);
   const [query, setQuery] = useState(selected?.name || '');
+  const [showAll,setShowAll]=useState(false);
   const [open, setOpen] = useState(false), [active, setActive] = useState(0), [invalid, setInvalid] = useState(false);
   const selectedName = selected?.name;
 
@@ -36,11 +39,11 @@ export default function PlayerSearch({ label, members, value, onChange, excluded
   }, [value, selectedName]);
 
   const candidates = useMemo(() => {
-    const key = searchKey(query);
+    const key = showAll ? '' : searchKey(query);
     return sortMembers(members
       .filter(member => (member.id === value || !excludedIds.includes(member.id)) &&
         (!key || searchKey(member.name).includes(key) || searchKey([playerDescription(member), affiliationLabel(member.affiliation)].join(' ')).includes(key))));
-  }, [members, excludedIds, value, query]);
+  }, [members, excludedIds, value, query, showAll]);
 
   const validSelection = Boolean(selected && query === selected.name);
   const error = !validSelection && (required || query.trim()) ? '候補から登録済みの選手を選択してください。' : '';
@@ -59,13 +62,13 @@ export default function PlayerSearch({ label, members, value, onChange, excluded
 
   function choose(member: Player) {
     preserveDraft.current = false;
-    setQuery(member.name); onChange(member.id); setInvalid(false);
+    setQuery(member.name); onChange(member.id); setInvalid(false);setShowAll(false);
     input.current?.setCustomValidity('');
     input.current?.focus();
     setOpen(false);
   }
 
-  return <div className="player-search" ref={root} onBlur={event => {
+  return <div className={`player-search ${compact ? 'match-player-filter' : ''}`} ref={root} onBlur={event => {
     if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false);
   }}>
     <label className="player-search-label" htmlFor={id}>{label}</label>
@@ -74,10 +77,10 @@ export default function PlayerSearch({ label, members, value, onChange, excluded
         aria-expanded={open} aria-controls={listId} aria-activedescendant={open && candidates[active] ? `${id}-option-${active}` : undefined}
         aria-describedby={hintId} aria-invalid={invalid && Boolean(error) || undefined}
         required={required} autoComplete="off" autoCapitalize="off" spellCheck={false}
-        placeholder="名前を入力して検索" value={query}
-        onFocus={event => { setOpen(true); setActive(0); if (validSelection) event.currentTarget.select(); }}
+        placeholder={compact ? "すべての選手" : "名前を入力して検索"} value={query}
+        onFocus={event => { if(compact)setShowAll(true);setOpen(true); setActive(0); if (validSelection) event.currentTarget.select(); }}
         onChange={event => {
-          setQuery(event.target.value); setOpen(true); setActive(0); setInvalid(false);
+          setQuery(event.target.value);setShowAll(false); setOpen(true); setActive(0); setInvalid(false);
           if (value) { preserveDraft.current = true; onChange(''); }
         }}
         onCompositionStart={() => { composing.current = true; }}
@@ -99,12 +102,14 @@ export default function PlayerSearch({ label, members, value, onChange, excluded
           } else if (event.key === 'Tab') setOpen(false);
         }}
       />
+      {compact&&<button type="button" className="player-search-toggle" aria-label={open?'選手の候補を閉じる':'選手の候補を開く'} aria-expanded={open} aria-controls={listId} onMouseDown={event=>event.preventDefault()} onClick={()=>{if(open)setOpen(false);else{input.current?.focus();setShowAll(true);setOpen(true);setActive(0);}}}><span aria-hidden="true">⌄</span></button>}
       {query && <button className="player-search-clear" type="button" aria-label={`${label}の選択をクリア`}
-        onClick={() => { preserveDraft.current = false; setQuery(''); onChange(''); setOpen(true); setActive(0); setInvalid(false); input.current?.focus(); }}>×</button>}
+        onClick={() => { preserveDraft.current = false; setQuery(''); onChange('');setShowAll(true); setOpen(true); setActive(0); setInvalid(false); input.current?.focus(); }}>×</button>}
     </div>
     <p className={`player-search-hint ${invalid && error ? 'is-error' : ''}`} id={hintId}>
       {invalid && error ? error : validSelection && selected ? `${playerDescription(selected)}${selected.deletedAt ? '・削除済み' : selected.status === 'inactive' ? '・候補から非表示' : ''}` : '名前・所属・学年から検索できます'}
     </p>
+    {(compact||showSelection)&&<p className="player-search-selection" role="status">{validSelection&&selected?'選択中：'+selected.name:query.trim()?'未確定：候補を選ぶと絞り込みます':compact?'すべての選手を表示中':'絞り込みなし'}</p>}
     {open && <div className="player-search-results">
       <div className="player-search-count" role="status">{candidates.length ? `${candidates.length}人の候補` : '該当する選手がいません'}</div>
       <ul className="player-search-list" id={listId} role="listbox" aria-label={`${label}の候補`}>

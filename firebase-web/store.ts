@@ -1,3 +1,4 @@
+import {matchPeople} from '../lib/match-search';
 import {collection,doc,getDoc,getDocs,setDoc,query,where,orderBy,limit,startAfter,runTransaction,serverTimestamp,Timestamp,type DocumentData,type QueryDocumentSnapshot} from 'firebase/firestore';
 import {auth,db} from './firebase';
 import {TeamError,memberInput,matchInput,fingerprint,normal,version,type Member,type MatchInput} from '../lib/team-domain';
@@ -17,10 +18,14 @@ const matchRef=(id:string)=>doc(db,'matches',id);
 const nameKey=(m:{name:string;group:string})=>JSON.stringify([normal(m.name),normal(m.group)]);
 const conflict=()=>new TeamError('別の画面で更新されました。入力を控えてから再読み込みしてください。',409);
 const feedbackRef=(uid:string,id:string)=>doc(db,'privateUsers',uid,'feedback',id);
-function uid(){if(!auth.currentUser)throw new TeamError('Googleでログインしてください。',401);return auth.currentUser.uid;}
+function uid(){if(!auth.currentUser)throw new TeamError('メールアドレスとパスワードでログインしてください。',401);return auth.currentUser.uid;}
 function captureSession(){return {epoch:sessionEpoch,id:uid()};}
 function assertSession(scope:ReturnType<typeof captureSession>){if(scope.epoch!==sessionEpoch||auth.currentUser?.uid!==scope.id)throw new TeamError('入場状態が変わりました。もう一度ロックを解除してください。',401);}
-export async function membership(){const scope=captureSession(),snap=await getDoc(doc(db,'memberships',scope.id));assertSession(scope);return snap.exists()?snap.data():null;}
+export async function membership(){
+  const scope=captureSession();
+  try{const snap=await getDoc(doc(db,'memberships',scope.id));assertSession(scope);return snap.exists()?snap.data():null;}
+  catch(error){if((error as {code?:string}).code==='permission-denied')throw new TeamError('ログイン後の参加情報を取得できません。メール認証版の保存ルールが反映されているか、保守担当に確認してください。',403,'membership_access_denied');throw error;}
+}
 export async function viewer():Promise<AccessViewer>{
   const scope=captureSession(),id=scope.id,m=await membership();assertSession(scope);if(!m?.active)throw new TeamError('部への参加登録を確認してください。',403);
   const p=await getDoc(memberRef(m.playerId));assertSession(scope);if(!p.exists())throw new TeamError('選手情報を確認してください。');
@@ -48,9 +53,10 @@ export async function ownLinkRequest():Promise<LinkRequest|null>{
 }
 export async function prepareJoin(phrase:string):Promise<JoinPlayer[]>{
   const scope=captureSession(),joinKey=await digest(phrase);
-  await setDoc(doc(db,'joinSessions',scope.id),{joinKey,createdAt:serverTimestamp()});assertSession(scope);
-  const result=await getDocs(query(collection(db,'players'),where('deletedAt','==',null)));assertSession(scope);
-  return result.docs.map(d=>d.data() as JoinPlayer).filter(p=>!p.deletedAt);
+  try{await setDoc(doc(db,'joinSessions',scope.id),{joinKey,createdAt:serverTimestamp()});assertSession(scope);}
+  catch(error){if((error as {code?:string}).code==='permission-denied')throw new TeamError('合言葉を確認できませんでした。入力内容・受付期限・保存先の設定を確認してください。',403,'join_code_denied');throw error;}
+  try{const result=await getDocs(query(collection(db,'players'),where('deletedAt','==',null)));assertSession(scope);return result.docs.map(d=>d.data() as JoinPlayer).filter(p=>!p.deletedAt);}
+  catch(error){if((error as {code?:string}).code==='permission-denied')throw new TeamError('合言葉の確認後に名簿を取得できません。画面に対応する保存ルールを保守担当に確認してください。',403,'roster_access_denied');throw error;}
 }
 export async function requestPlayerLink(playerId:string,approverUid:string){
   const scope=captureSession();if(approverUid===scope.id)throw new TeamError('自分自身には確認を依頼できません。');
@@ -180,7 +186,7 @@ async function journal(more:boolean){
   const result=await getDocs(query(collection(db,'privateUsers',id,'feedback'),...base,...(journalCursor?[startAfter(journalCursor)]:[])));
   assertSession(scope);
   journalCursor=result.docs.at(-1)??journalCursor;
-  const feedback=await Promise.all(result.docs.map(async d=>{const row=d.data(),m=await getDoc(matchRef(row.matchId));return {matchId:row.matchId,context:decodeMatch(row.context),version:row.version,updatedAt:row.updatedAt?.toDate().toISOString(),archived:!m.exists()||Boolean(m.data()?.deletedAt)};}));
+  const feedback=await Promise.all(result.docs.map(async d=>{const row=d.data(),m=await getDoc(matchRef(row.matchId));return {matchId:row.matchId,context:decodeMatch(row.context),version:row.version,updatedAt:row.updatedAt?.toDate().toISOString(),archived:!m.exists()||Boolean(m.data()?.deletedAt),people:m.exists()?matchPeople({sideAIds:m.data()!.sideAIds,sideBIds:m.data()!.sideBIds,opponentType:m.data()!.opponentType,opponents:m.data()!.opponents},row.ownerMemberId):null};}));
   return {feedback,hasMore:result.size===20};
 }
 export async function firebaseRequest<T>(url:string,method:string,raw?:unknown):Promise<T>{

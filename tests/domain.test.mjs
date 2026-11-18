@@ -201,3 +201,32 @@ test('表示年度に応じて卒業を反映し、GWや候補の非表示で所
   assert.equal(cohort.memberClassification(older,'2026-05-10'),'現役・79期生');
   assert.equal(cohort.memberClassification(older,'2027-04-01'),'OB/OG・79期生');
 });
+
+const search=await import(url(compile('../lib/match-search.ts').replaceAll("'./member-name'",JSON.stringify(memberNameUrl))));
+const searchFixture={id:'search',date:'2026-11-17',category:'ゲーム練',event:'',discipline:'ダブルス',opponentType:'internal',sideAIds:['a','b'],sideBIds:['c','d'],opponents:[],scores:[[11,15]],memo:''};
+test('ペアと相手は選択選手の側で区別し、SIDE Bの勝敗を反転する',()=>{
+ const people=search.matchPeople(searchFixture,'c');assert.deepEqual(people,{ownIds:['c','d'],oppositeIds:['a','b'],opponents:[]});
+ assert.equal(search.matchesPeople(people,'d','id:a'),true);assert.equal(search.matchesPeople(people,'a','id:d'),false);
+ const history=memberMatchHistory([searchFixture],'c').filter(item=>search.matchesPeople(item,'d','id:a'));
+ assert.deepEqual(summarizeMemberMatches(history),{total:1,wins:1,losses:0,draws:0,winRate:100});
+});
+test('ペアと対戦相手の両条件で集計し、引き分けを勝率の分母から除く',()=>{
+ const fixtures=[searchFixture,{...searchFixture,id:'draw',scores:[[11,11]]},{...searchFixture,id:'win',scores:[[15,11]]},{...searchFixture,id:'other-pair',sideAIds:['a','e']},{...searchFixture,id:'other-opponent',sideBIds:['e','f']}];
+ const history=memberMatchHistory(fixtures,'a').filter(item=>search.matchesPeople(item,'b','id:c'));
+ assert.deepEqual(summarizeMemberMatches(history),{total:3,wins:1,losses:1,draws:1,winRate:50});
+});
+test('同名の登録選手をIDで区別し、名前だけの対戦相手と混同しない',()=>{
+ const people={ownIds:['a','b'],oppositeIds:['same-name-1'],opponents:[]};
+ assert.equal(search.matchesPeople(people,'','id:same-name-1'),true);assert.equal(search.matchesPeople(people,'','id:same-name-2'),false);assert.equal(search.matchesPeople(people,'','name:アオキ'),false);
+ const legacy={ownIds:['a'],oppositeIds:[],opponents:['ｱｵｷ タロウ']};assert.equal(search.matchesPeople(legacy,'','name:アオキタロウ'),true);assert.equal(search.matchesPeople(legacy,'','id:アオキタロウ'),false);
+});
+test('外部戦は名前の相手を検索でき、シングルスにペアを指定すると除外する',()=>{
+ const match={...searchFixture,opponentType:'external',sideAIds:['a'],sideBIds:[],opponents:['アオキ']};
+ assert.deepEqual(search.matchPeople(match,'a'),{ownIds:['a'],oppositeIds:[],opponents:['アオキ']});assert.equal(search.matchPeople(match,'c'),null);assert.equal(search.matchesPeople(search.matchPeople(match,'a'),'b',''),false);
+});
+test('期間は両端を含めて絞り込み、開始日・終了日の片方だけでも指定できる',()=>{
+ assert.equal(search.inDateRange('2026-11-17','2026-11-17','2026-11-17'),true);assert.equal(search.inDateRange('2026-11-16','2026-11-17',''),false);assert.equal(search.inDateRange('2026-11-18','','2026-11-17'),false);assert.equal(search.inDateRange('2026-11-17','',''),true);
+});
+test('人物情報がない過去の振り返りは全件表示に残し、人物を推測して一致させない',()=>{
+ assert.equal(search.matchesPeople(null,'',''),true);assert.equal(search.matchesPeople(null,'b',''),false);assert.equal(search.matchesPeople(undefined,'','id:c'),false);
+});

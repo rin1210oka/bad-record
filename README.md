@@ -11,7 +11,7 @@ React / TypeScript / Viteで画面を作り、Firebase Hosting・Authentication�
 - 公式戦・練習試合・ゲーム練、シングルス・ダブルスの記録
 - 終了点やセット数を固定しない勝敗計算、検索、成績、CSV出力
 - 同じ試合の重複警告、再送時の二重登録防止、版番号による同時編集の検出
-- Googleアカウントの本人だけが読み書きできる試合の振り返り
+- メール確認済みアカウントの本人だけが読み書きできる試合の振り返り
 
 ## 開発
 
@@ -25,6 +25,8 @@ npm run dev
 Webアプリの公開設定は `.env.firebase.example` を参考に `.env.local` に設定します。
 秘密鍵やサービスアカウントのJSONは不要です。
 
+- `npm run dev:local`：本番へ接続しないローカル確認（テスト用合言葉：`shuttle-local`）
+- `npm run check:deployment`：認証設定と公開済み保存ルールの読み取り確認
 - `npm run build`：公開用ファイルを作成
 - `npm start`：ビルド済み画面をローカルで確認
 - `npm run typecheck`：TypeScriptの型確認
@@ -35,7 +37,7 @@ Webアプリの公開設定は `.env.firebase.example` を参考に `.env.local`
 
 ## ファイル構成
 
-- `firebase-web/`：入場、Googleログイン、端末PIN、Firestoreの保存処理
+- `firebase-web/`：入場、メール・パスワード認証、端末PIN、Firestoreの保存処理
 - `app/`：試合・メンバー・振り返りの画面とCSS
 - `lib/`：入力検証、勝敗・学年・成績の計算、共通型
 - `firestore.rules`：本人限定アクセスと保存内容の検証

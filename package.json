@@ -12,8 +12,10 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run test:domain && npm run test:firebase",
     "test:domain": "node --test tests/domain.test.mjs",
-    "test:firebase": "firebase emulators:exec --only firestore --project demo-shuttle-note \"node --test --test-concurrency=1 tests/firebase/*.test.mjs\"",
-    "deploy": "npm run build && firebase deploy --only firestore:rules,firestore:indexes,hosting"
+    "test:firebase": "firebase emulators:exec --only auth,firestore --project demo-shuttle-note \"node --test --test-concurrency=1 tests/firebase/*.test.mjs\"",
+    "deploy": "npm run build && firebase deploy --only firestore:rules,firestore:indexes,hosting",
+    "dev:local": "firebase emulators:exec --only auth,firestore --project demo-shuttle-note \"node scripts/dev-local.mjs\"",
+    "check:deployment": "node scripts/check-deployment.mjs"
   },
   "dependencies": {
     "firebase": "^13.2.0",
