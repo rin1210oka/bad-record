@@ -1,3 +1,6 @@
+import FeedbackCalendar from './feedback-calendar';
+import {feedbackPeriod,calendarMarkers} from '../lib/feedback-browse';
+import {japanDate} from '../lib/member-cohort';
 import MatchPeopleFilters,{type SearchPlayer} from './match-people-filters';
 import {inDateRange,matchesPeople,type MatchPeople} from '../lib/match-search';
 import {useCallback,useEffect,useId,useRef,useState} from 'react';
@@ -5,7 +8,7 @@ import type {FeedbackContext,MatchFeedback} from '../lib/feedback-types';
 import {clientRequest} from '../lib/client-backend';
 
 type FeedbackResponse={feedback:MatchFeedback|null;context:FeedbackContext;archived:boolean;canCreate:boolean};
-type JournalEntry={matchId:string;context:FeedbackContext;version:number;updatedAt:string;archived:boolean;people?:MatchPeople|null};
+type JournalEntry={matchId:string;context:FeedbackContext;version:number;updatedAt:string;archived:boolean;people?:MatchPeople|null;goodPoints?:string;improvements?:string;nextAction?:string};
 async function request<T>(url:string,method='GET',body?:unknown,signal?:AbortSignal):Promise<T>{
   signal?.throwIfAborted();const value=await clientRequest<T>(url,method,body);signal?.throwIfAborted();return value;
 }
@@ -63,6 +66,8 @@ export function MatchFeedbackModal({matchId,onClose,onSaved}:{matchId:string;onC
   </FeedbackDialog>;
 }
 export function FeedbackJournal({onSelect,availableMatches,viewerName,members,memberId,revision=0}:{onSelect:(matchId:string)=>void;availableMatches:{matchId:string;context:FeedbackContext;people:MatchPeople}[];viewerName:string;members:SearchPlayer[];memberId:string;revision?:number}){
+  const today=japanDate();
+  const [calendarOpen,setCalendarOpen]=useState(false),[reading,setReading]=useState(false);
   const [from,setFrom]=useState(''),[to,setTo]=useState(''),[partnerId,setPartnerId]=useState(''),[opponent,setOpponent]=useState('');
   const [entries,setEntries]=useState<JournalEntry[]|null>(null),[error,setError]=useState(''),[retry,setRetry]=useState(0);
   useEffect(()=>{
@@ -87,16 +92,22 @@ export function FeedbackJournal({onSelect,availableMatches,viewerName,members,me
   const filtered=Boolean(from||to||partnerId||opponent);
   const accepts=(entry:{context:FeedbackContext;people?:MatchPeople|null})=>!invalidDates&&inDateRange(entry.context.date,from,to)&&matchesPeople(entry.people,partnerId,opponent);
   const pending=allPending.filter(accepts),saved=allSaved.filter(accepts);
+  const markers=calendarMarkers(allPending.filter(entry=>matchesPeople(entry.people,partnerId,opponent)).map(entry=>entry.context.date),allSaved.filter(entry=>matchesPeople(entry.people,partnerId,opponent)).map(entry=>entry.context.date));
+  const selectPeriod=(period:'month'|'year'|'all')=>{const range=feedbackPeriod(period,today);setFrom(range.from);setTo(range.to);setCalendarOpen(false);};
   return <section className="feedback-workspace" aria-label="自分のフィードバック">
     <div className="feedback-workspace-toolbar"><p className="feedback-private">本人だけに表示・チームの共有メモには入りません</p><button type="button" className="secondary" disabled={entries===null&&!error} onClick={()=>setRetry(value=>value+1)}>最新の状態に更新</button></div>
     <section className="panel feedback-search-panel" aria-label="フィードバックを絞り込み">
+      <div className="feedback-period-buttons" aria-label="振り返りの表示期間">{([['month','直近1か月'],['year','今年度'],['all','すべての期間']] as const).map(([period,label])=>{const range=feedbackPeriod(period,today);return <button className="secondary" type="button" key={period} aria-pressed={range.from===from&&range.to===to} onClick={()=>selectPeriod(period)}>{label}</button>;})}<button className="secondary" type="button" aria-expanded={calendarOpen} onClick={()=>setCalendarOpen(value=>!value)}>日付から探す</button></div>
+      {calendarOpen&&<FeedbackCalendar today={today} selectedDate={from===to?from:''} marks={markers} ready={entries!==null} onDate={date=>{setFrom(date);setTo(date);}}/>}
+      {from&&from===to&&<p className="feedback-selected-date">選択した日付：{from.replaceAll('-','.')} <button className="text-button" type="button" onClick={()=>{setFrom('');setTo('');}}>日付指定を解除</button></p>}
       <div className="feedback-date-filters"><label>開始日<input type="date" aria-label="フィードバックの開始日" value={from} onChange={event=>setFrom(event.target.value)}/></label><label>終了日<input type="date" aria-label="フィードバックの終了日" value={to} onChange={event=>setTo(event.target.value)}/></label></div>
       <MatchPeopleFilters people={[...availableMatches,...(entries||[])].map(entry=>entry.people)} members={members} memberId={memberId} partnerId={partnerId} opponent={opponent} onPartner={setPartnerId} onOpponent={setOpponent}/>
       {invalidDates&&<p className="form-error" role="alert">終了日は開始日以降を指定してください。</p>}
       {filtered&&<button type="button" className="text-button" onClick={()=>{setFrom('');setTo('');setPartnerId('');setOpponent('');}}>絞り込みを解除</button>}
       <p className="form-hint">同じ条件で未記入・記入済みの両方を絞り込みます。</p>
     </section>
-    {error?<div className="error-banner" role="alert"><span>{error}</span><button type="button" onClick={()=>setRetry(value=>value+1)}>再読み込み</button></div>:entries===null?<p className="feedback-loading" role="status">振り返りの記入状況を確認しています…</p>:<div className="feedback-workspace-grid">
+    <div className="feedback-view-buttons" aria-label="振り返りの表示方法"><button type="button" className="secondary" aria-pressed={!reading} onClick={()=>setReading(false)}>試合から選ぶ</button><button type="button" className="secondary" aria-pressed={reading} onClick={()=>setReading(true)}>まとめて読む</button></div>
+    {error?<div className="error-banner" role="alert"><span>{error}</span><button type="button" onClick={()=>setRetry(value=>value+1)}>再読み込み</button></div>:entries===null?<p className="feedback-loading" role="status">振り返りの記入状況を確認しています…</p>:reading?<section className="panel feedback-reading-panel" aria-label="自分の振り返りをまとめて読む"><div className="section-heading"><div><h2>振り返りをまとめて読む <span className="count-pill">{saved.length}</span></h2><p>選択した条件の記入済みの振り返りを、新しい試合から表示します。</p></div></div>{saved.length?<div className="feedback-reading-list">{saved.map(entry=><article className="feedback-reading-entry" key={entry.matchId}><MatchContext context={entry.context} archived={entry.archived}/><dl>{([['goodPoints','よかったこと'],['improvements','改善したいこと'],['nextAction','次に取り組むこと']] as const).map(([field,label])=>entry[field]?.trim()?<div key={field}><dt>{label}</dt><dd>{entry[field]}</dd></div>:null)}</dl><button type="button" className="text-button" onClick={()=>onSelect(entry.matchId)}>この振り返りを編集する ↗</button></article>)}</div>:<div className="feedback-empty"><h3>{filtered?'条件に合う振り返りはありません':'保存した振り返りはまだありません'}</h3><p>記入済みの振り返りを、この画面でまとめて読み返せます。</p></div>}</section>:<div className="feedback-workspace-grid">
       <section className="panel feedback-workspace-section" aria-labelledby="feedback-pending-heading"><div className="section-heading"><div><h2 id="feedback-pending-heading">未記入 <span className="count-pill">{pending.length}{filtered&&' / '+allPending.length}</span></h2><p>自分が出場した、これから振り返りを書ける試合。</p></div></div>
         {pending.length?<ul className="feedback-journal-list">{pending.map(entry=><li key={entry.matchId}><button type="button" className="feedback-journal-entry" onClick={()=>onSelect(entry.matchId)}><MatchContext context={entry.context}/><span className="feedback-journal-open">振り返りを書く ↗</span></button></li>)}</ul>:<div className="feedback-empty"><h3>{filtered?'条件に合う未記入の試合はありません':availableMatches.length?'未記入の試合はありません':'出場した試合がまだありません'}</h3><p>{filtered?'日付・ペア相手・対戦相手の条件を変えてください。':availableMatches.length?'出場した試合の振り返りはすべて記入済みです。':'試合の出場選手に「'+viewerName+'」を選ぶと、ここに表示されます。'}</p></div>}
       </section>
@@ -105,4 +116,10 @@ export function FeedbackJournal({onSelect,availableMatches,viewerName,members,me
       </section>
     </div>}
   </section>;
+}
+
+export function FeedbackGoal({revision,onSelect}:{revision:number;onSelect:(id:string)=>void}){
+ const [data,setData]=useState<{matchId:string;date:string;nextAction:string}|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState(''),[retry,setRetry]=useState(0);
+ useEffect(()=>{const controller=new AbortController();setData(null);setError('');setLoading(true);void request<{goal:typeof data}>('/api/feedback-goal','GET',undefined,controller.signal).then(result=>setData(result.goal)).catch(failure=>{if(!controller.signal.aborted)setError((failure as Error).message);}).finally(()=>{if(!controller.signal.aborted)setLoading(false);});return()=>controller.abort();},[revision,retry]);
+ return <section className="panel feedback-goal" aria-labelledby="feedback-goal-heading"><div className="feedback-goal-heading"><h2 id="feedback-goal-heading">次の試合で意識すること</h2><span>本人だけに表示</span></div>{loading?<p role="status">目標を読み込んでいます…</p>:error?<div><p role="alert">{error}</p><button type="button" className="text-button" onClick={()=>setRetry(value=>value+1)}>再読み込み</button></div>:data?<><p className="feedback-goal-text">{data.nextAction}</p><div className="feedback-goal-footer"><span>{data.date.replaceAll('-','.')}の試合の振り返りより</span><button className="text-button" type="button" onClick={()=>onSelect(data.matchId)}>振り返りを開く ↗</button></div></>:<p>振り返りに「次に取り組むこと」を保存すると、ここで確認できます。</p>}</section>;
 }

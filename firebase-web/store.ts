@@ -1,5 +1,5 @@
 import {matchPeople} from '../lib/match-search';
-import {collection,doc,getDoc,getDocs,setDoc,query,where,orderBy,limit,startAfter,runTransaction,serverTimestamp,Timestamp,type DocumentData,type QueryDocumentSnapshot} from 'firebase/firestore';
+import {collection,doc,getDoc,getDocs,setDoc,query,where,orderBy,limit,startAfter,runTransaction,serverTimestamp,Timestamp,type DocumentData,type QueryDocumentSnapshot,type QuerySnapshot} from 'firebase/firestore';
 import {auth,db} from './firebase';
 import {TeamError,memberInput,matchInput,fingerprint,normal,version,type Member,type MatchInput} from '../lib/team-domain';
 import {memberSnapshot,japanDate,schoolYear} from '../lib/member-cohort';
@@ -186,8 +186,17 @@ async function journal(more:boolean){
   const result=await getDocs(query(collection(db,'privateUsers',id,'feedback'),...base,...(journalCursor?[startAfter(journalCursor)]:[])));
   assertSession(scope);
   journalCursor=result.docs.at(-1)??journalCursor;
-  const feedback=await Promise.all(result.docs.map(async d=>{const row=d.data(),m=await getDoc(matchRef(row.matchId));return {matchId:row.matchId,context:decodeMatch(row.context),version:row.version,updatedAt:row.updatedAt?.toDate().toISOString(),archived:!m.exists()||Boolean(m.data()?.deletedAt),people:m.exists()?matchPeople({sideAIds:m.data()!.sideAIds,sideBIds:m.data()!.sideBIds,opponentType:m.data()!.opponentType,opponents:m.data()!.opponents},row.ownerMemberId):null};}));
+  const feedback=await Promise.all(result.docs.map(async d=>{const row=d.data(),m=await getDoc(matchRef(row.matchId));return {goodPoints:row.goodPoints,improvements:row.improvements,nextAction:row.nextAction,matchId:row.matchId,context:decodeMatch(row.context),version:row.version,updatedAt:row.updatedAt?.toDate().toISOString(),archived:!m.exists()||Boolean(m.data()?.deletedAt),people:m.exists()?matchPeople({sideAIds:m.data()!.sideAIds,sideBIds:m.data()!.sideBIds,opponentType:m.data()!.opponentType,opponents:m.data()!.opponents},row.ownerMemberId):null};}));
   return {feedback,hasMore:result.size===20};
+}
+async function latestFeedbackGoal(){
+  const scope=captureSession();let cursor:QueryDocumentSnapshot|null=null;
+  while(true){
+    const result:QuerySnapshot=await getDocs(query(collection(db,'privateUsers',scope.id,'feedback'),orderBy('context.date','desc'),orderBy('__name__','desc'),limit(20),...(cursor?[startAfter(cursor)]:[])));
+    assertSession(scope);
+    for(const note of result.docs){const row=note.data();if(typeof row.nextAction==='string'&&row.nextAction.trim())return {goal:{matchId:row.matchId,date:row.context.date,nextAction:row.nextAction}};}
+    if(result.size<20)return {goal:null};cursor=result.docs[result.docs.length-1];
+  }
 }
 export async function firebaseRequest<T>(url:string,method:string,raw?:unknown):Promise<T>{
   if(!unlocked)throw new TeamError('4桁PINでロックを解除してください。',401);
@@ -200,6 +209,7 @@ export async function firebaseRequest<T>(url:string,method:string,raw?:unknown):
       value=await decideLink(decodeURIComponent(url.split('/')[3]),body.approve);
     }
     else if(url==='/api/team'&&method==='GET')value=await bootstrap();
+    else if(url==='/api/feedback-goal'&&method==='GET')value=await latestFeedbackGoal();
     else if(url.startsWith('/api/feedback')&&method==='GET')value=await journal(url.includes('more=1'));
     else if(/^\/api\/matches\/[^/]+\/feedback$/.test(url))value=await feedback(decodeURIComponent(url.split('/')[3]),method,body);
     else if(url==='/api/members'&&method==='POST')value=await writeMember(body);
@@ -214,6 +224,7 @@ export async function firebaseRequest<T>(url:string,method:string,raw?:unknown):
     if(error instanceof TeamError)throw error;
     const code=(error as {code?:string}).code;
     if(code==='permission-denied')throw new TeamError('このデータを操作する権限がありません。参加登録と接続を確認してください。',403);
+    if(code==='failed-precondition'&&/index/i.test((error as {message?:string}).message||''))throw new TeamError('日付検索に必要な保存先の設定がまだ反映されていません。保守担当にお知らせください。',503,'query_index_missing');
     if(code==='resource-exhausted')throw new TeamError('無料枠の利用上限に達しました。時間をおいて再度お試しください。',429);
     if(code==='aborted')throw conflict();
     throw new TeamError('保存先に接続できません。入力を残したまま、接続を確認してください。',503);

@@ -40,6 +40,16 @@
       "collectionGroup": "joinSessions",
       "fieldPath": "joinKey",
       "indexes": []
+    },
+    {
+      "collectionGroup": "feedback",
+      "fieldPath": "context.date",
+      "indexes": [
+        {
+          "order": "DESCENDING",
+          "queryScope": "COLLECTION"
+        }
+      ]
     }
   ]
 }

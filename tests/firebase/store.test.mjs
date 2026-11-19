@@ -13,12 +13,12 @@ const domain=url(compile('lib/team-domain.ts').replaceAll("'./member-name'",JSON
 const codec=url(compile('firebase-web/codec.ts'));
 const search=url(compile('lib/match-search.ts').replaceAll("'./member-name'",JSON.stringify(names)));
 const firestoreReal=import.meta.resolve('firebase/firestore');
-const firestore=url('export * from '+JSON.stringify(firestoreReal)+';import {getDocs as realGetDocs} from '+JSON.stringify(firestoreReal)+';export async function getDocs(q){const value=await realGetDocs(q);const hold=globalThis.__pauseStoreRead;if(hold)await hold();return value;}');
+const firestore=url('export * from '+JSON.stringify(firestoreReal)+';import {getDocs as realGetDocs} from '+JSON.stringify(firestoreReal)+';export async function getDocs(q){if(globalThis.__failStoreRead){const error=globalThis.__failStoreRead;delete globalThis.__failStoreRead;throw error;}const value=await realGetDocs(q);const hold=globalThis.__pauseStoreRead;if(hold)await hold();return value;}');
 let env,store;
 before(async()=>{env=await initializeTestEnvironment({projectId:'demo-shuttle-note',firestore:{rules:fs.readFileSync('firestore.rules','utf8'),host:'127.0.0.1',port:8080}});});
 after(async()=>{await env?.cleanup();delete globalThis.__storeDb;delete globalThis.__storeAuth;});
 beforeEach(async()=>{
-  delete globalThis.__pauseStoreRead;
+  delete globalThis.__pauseStoreRead;delete globalThis.__failStoreRead;
   await env.clearFirestore();
   globalThis.__storeDb=env.authenticatedContext('self',{email:'self@example.invalid',email_verified:true,firebase:{sign_in_provider:'password'}}).firestore();
   globalThis.__storeAuth={currentUser:{uid:'self',email:'self@example.invalid'}};
@@ -83,4 +83,32 @@ test('振り返りは各欄1000字までで、3欄合計3000字と絵文字を�
  }
  await call(path,'PUT',{version:1,goodPoints:'😀'.repeat(1000),improvements:'',nextAction:''});assert.equal(Array.from((await call(path)).feedback.goodPoints).length,1000);
  await assert.rejects(call(path,'PUT',{version:2,goodPoints:'😀'.repeat(1001),improvements:'',nextAction:''}),/1000文字/);
+});
+
+test('ホームの目標は本人の最新試合日を優先し、空欄を飛ばして他人の目標を返さない',async()=>{
+ const {input}=await fixture();
+ const add=async(id,date,nextAction)=>{await call('/api/matches','POST',{...input,id,date});await call('/api/matches/'+id+'/feedback','PUT',{version:0,goodPoints:'本文'+id,improvements:'改善'+id,nextAction});};
+ assert.equal((await call('/api/feedback-goal')).goal,null);
+ await add('11111111-1111-4111-8111-111111111111','2026-10-01','前の目標');await add('22222222-2222-4222-8222-222222222222','2026-11-01','新しい目標');await add('33333333-3333-4333-8333-333333333333','2026-11-17','');
+ await call('/api/matches/11111111-1111-4111-8111-111111111111/feedback','PUT',{version:1,goodPoints:'編集',improvements:'',nextAction:'過去試合の編集'});
+ await env.withSecurityRulesDisabled(c=>setDoc(doc(c.firestore(),'privateUsers','someone-else','feedback','private-goal'),{context:{date:'2099-01-01'},nextAction:'他人の目標'}));
+ assert.deepEqual((await call('/api/feedback-goal')).goal,{matchId:'22222222-2222-4222-8222-222222222222',date:'2026-11-01',nextAction:'新しい目標'});
+ const journal=await call('/api/feedback');assert.ok(journal.feedback.every(entry=>entry.matchId!=='private-goal'));assert.equal(journal.feedback.find(entry=>entry.matchId==='22222222-2222-4222-8222-222222222222').goodPoints,'本文22222222-2222-4222-8222-222222222222');assert.equal(journal.feedback.find(entry=>entry.matchId==='22222222-2222-4222-8222-222222222222').improvements,'改善22222222-2222-4222-8222-222222222222');
+ await call('/api/matches/22222222-2222-4222-8222-222222222222/feedback','DELETE',{version:1});assert.equal((await call('/api/feedback-goal')).goal.matchId,'11111111-1111-4111-8111-111111111111');
+ store.setUnlocked(false);await assert.rejects(call('/api/feedback-goal'),error=>error.status===401);
+});
+
+test('目標のない振り返りが20件を超えても、次ページから本人の目標を探せる',async()=>{
+ await fixture();
+ await env.withSecurityRulesDisabled(async c=>{
+  const db=c.firestore();
+  await setDoc(doc(db,'privateUsers','self','feedback','goal-before-empty'),{matchId:'old',context:{date:'2025-01-01'},nextAction:'前から取り組んでいる目標'});
+  for(let i=1;i<=22;i++)await setDoc(doc(db,'privateUsers','self','feedback','empty-'+i),{matchId:'empty-'+i,context:{date:'2026-11-'+String(i).padStart(2,'0')},nextAction:''});
+ });
+ assert.deepEqual((await call('/api/feedback-goal')).goal,{matchId:'old',date:'2025-01-01',nextAction:'前から取り組んでいる目標'});
+});
+
+test('索引不足を通信断と区別し、保存先の検索設定を案内する',async()=>{
+ await fixture();globalThis.__failStoreRead=Object.assign(new Error('The query requires an index.'),{code:'failed-precondition'});
+ await assert.rejects(call('/api/feedback-goal'),error=>error.code==='query_index_missing'&&error.message.includes('日付検索')&&!error.message.includes('接続できません'));
 });

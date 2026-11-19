@@ -230,3 +230,24 @@ test('期間は両端を含めて絞り込み、開始日・終了日の片方�
 test('人物情報がない過去の振り返りは全件表示に残し、人物を推測して一致させない',()=>{
  assert.equal(search.matchesPeople(null,'',''),true);assert.equal(search.matchesPeople(null,'b',''),false);assert.equal(search.matchesPeople(undefined,'','id:c'),false);
 });
+
+const browse=await import(url(compile('../lib/feedback-browse.ts')));
+test('直近1か月は月末とうるう年を補正し、今年度は4月始まりにする',()=>{
+ assert.deepEqual(browse.feedbackPeriod('month','2026-03-31'),{from:'2026-02-28',to:'2026-03-31'});
+ assert.deepEqual(browse.feedbackPeriod('month','2024-03-31'),{from:'2024-02-29',to:'2024-03-31'});
+ assert.deepEqual(browse.feedbackPeriod('month','2026-01-15'),{from:'2025-12-15',to:'2026-01-15'});
+ assert.deepEqual(browse.feedbackPeriod('year','2026-03-31'),{from:'2025-04-01',to:'2026-03-31'});
+ assert.deepEqual(browse.feedbackPeriod('year','2026-04-01'),{from:'2026-04-01',to:'2027-03-31'});
+ assert.deepEqual(browse.feedbackPeriod('all','2026-04-01'),{from:'',to:''});
+});
+test('日曜始まりのカレンダーにすべての日を一度だけ配置し、うるう年も表示する',()=>{
+ for(const month of ['2026-02','2026-11','2024-02','2026-08']){
+  const cells=browse.calendarCells(month),days=cells.filter(Boolean),date=new Date(month+'-01T00:00:00Z');
+  assert.equal(cells.length%7,0);assert.equal(cells.findIndex(Boolean),date.getUTCDay());
+  assert.equal(days.length,new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+1,0)).getUTCDate());assert.equal(new Set(days).size,days.length);
+ }
+ assert.ok(browse.calendarCells('2024-02').includes('2024-02-29'));assert.equal(browse.shiftCalendarMonth('2026-12',1),'2027-01');assert.equal(browse.shiftCalendarMonth('2026-01',-1),'2025-12');
+});
+test('同じ日の未記入と記入済みを区別し、削除済み試合の振り返りの日付も残す',()=>{
+ assert.deepEqual(browse.calendarMarkers(['2026-11-17','2026-11-17'],['2026-11-17','2025-04-01']),{'2026-11-17':{pending:2,saved:1},'2025-04-01':{pending:0,saved:1}});
+});
