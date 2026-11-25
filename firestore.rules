@@ -21,11 +21,11 @@ service cloud.firestore {
     }
     function named(d,id) { return d.deletedAt != null || getAfter(/databases/$(database)/documents/playerNames/$(d.nameLock)).data.playerId == id; }
     function joined(uid,d) {
-      let gate = get(/databases/$(database)/documents/joinKeys/$(d.joinKey)).data;
       let player = getAfter(/databases/$(database)/documents/players/$(d.playerId)).data;
       return verifiedEmail() && request.auth.uid == uid && d.keys().hasOnly(['playerId','active','joinKey','createdAt'])
         && d.active == true && d.createdAt == request.time && d.playerId == 'self-' + uid
-        && gate.enabled == true && gate.expiresAt > request.time && player.ownerUid == uid;
+        && player.ownerUid == uid
+        && (d.joinKey == '' ? designatedFounder() && exists(/databases/$(database)/documents/team/current) : validGate(d.joinKey));
     }
     function validGate(key) { let g = get(/databases/$(database)/documents/joinKeys/$(key)).data; return g.enabled == true && g.expiresAt > request.time; }
     function invited() {
@@ -73,7 +73,37 @@ service cloud.firestore {
           && getAfter(/databases/$(database)/documents/players/$(resource.data.playerId)).data.ownerUid == uid);
       allow delete: if false;
     }
-    match /joinKeys/{key} { allow read, write: if false; }
+    function designatedFounder() {
+      return verifiedEmail() && get(/databases/$(database)/documents/setup/founder).data.email == request.auth.token.email;
+    }
+    function firstTeam() {
+      return designatedFounder() && !exists(/databases/$(database)/documents/team/current);
+    }
+    function currentTeamCreated() {
+      return getAfter(/databases/$(database)/documents/team/current).data.createdAt == request.time;
+    }
+    function initialJoinKey() {
+      return getAfter(/databases/$(database)/documents/setup/teamRegistration).data.joinKey;
+    }
+    match /setup/founder { allow get: if designatedFounder(); }
+    match /setup/teamRegistration {
+      allow create: if firstTeam() && currentTeamCreated()
+        && request.resource.data.keys().hasOnly(['joinKey'])
+        && request.resource.data.joinKey.matches('[a-f0-9]{64}')
+        && getAfter(/databases/$(database)/documents/joinKeys/$(request.resource.data.joinKey)).data.enabled == true;
+    }
+    match /team/current {
+      allow get: if true;
+      allow create: if firstTeam() && request.resource.data.keys().hasOnly(['name','createdAt'])
+        && text(request.resource.data.name,60) && request.resource.data.name.size() > 0
+        && request.resource.data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/joinKeys/$(initialJoinKey())).data.enabled == true;
+    }
+    match /joinKeys/{key} {
+      allow create: if firstTeam() && currentTeamCreated() && initialJoinKey() == key
+        && request.resource.data.keys().hasOnly(['enabled','expiresAt']) && request.resource.data.enabled == true
+        && request.resource.data.expiresAt is timestamp && request.resource.data.expiresAt > request.time;
+    }
     match /memberships/{uid} {
       allow get: if verifiedEmail() && request.auth.uid == uid;
       allow create: if joined(uid,request.resource.data) && !pendingLink(uid) || linkedMembership(uid,request.resource.data);
@@ -180,6 +210,237 @@ service cloud.firestore {
         && request.resource.data.ownerMemberId == resource.data.ownerMemberId && request.resource.data.context == resource.data.context
         && request.resource.data.createdAt == resource.data.createdAt && request.resource.data.version == resource.data.version + 1;
       allow delete: if own(uid);
+    }
+
+    function accountHasTeamAfter(uid,teamId) {
+      return teamId in getAfter(/databases/$(database)/documents/accountTeams/$(uid)).data.teamIds;
+    }
+    function createsTeam(uid,teamId) {
+      let team = getAfter(/databases/$(database)/documents/teams/$(teamId)).data;
+      return request.auth.uid == uid && team.ownerUid == uid && team.createdAt == request.time;
+    }
+    function addsMembership(uid,teamId) {
+      let membership = getAfter(/databases/$(database)/documents/teams/$(teamId)/memberships/$(uid)).data;
+      return membership.active == true && membership.createdAt == request.time;
+    }
+    function appendsTeam(uid, previous) {
+      let next = request.resource.data;
+      return verifiedEmail() && next.keys().hasOnly(['teamIds','lastAdded'])
+        && next.teamIds is list && next.lastAdded is string && next.lastAdded.matches('[a-zA-Z0-9_-]{1,64}')
+        && !previous.hasAny([next.lastAdded])
+        && next.teamIds.size() <= 3 && next.teamIds.size() == previous.size() + 1
+        && next.teamIds.toSet() == previous.toSet().union([next.lastAdded].toSet())
+        && (createsTeam(uid,next.lastAdded) || addsMembership(uid,next.lastAdded));
+    }
+    match /accountTeams/{uid} {
+      allow get: if verifiedEmail() && request.auth.uid == uid;
+      allow create: if appendsTeam(uid,[]);
+      allow update: if appendsTeam(uid,resource.data.teamIds);
+    }
+    match /teamCodes/{key} {
+      allow get: if verifiedEmail();
+      allow create: if verifiedEmail() && key.matches('[a-f0-9]{64}')
+        && request.resource.data.keys().hasOnly(['teamId','expiresAt'])
+        && request.resource.data.expiresAt is timestamp && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt <= request.time + duration.value(366,'d')
+        && createsTeam(request.auth.uid,request.resource.data.teamId)
+        && getAfter(/databases/$(database)/documents/teams/$(request.resource.data.teamId)/settings/registration).data.codeKey == key;
+    }
+    match /teams/{teamId} {
+      function teamOwner() {
+        return verifiedEmail() && get(/databases/$(database)/documents/teams/$(teamId)).data.ownerUid == request.auth.uid;
+      }
+      allow get: if teamOwner() || member() || invited();
+      allow create: if verifiedEmail() && teamId.matches('[a-zA-Z0-9_-]{1,64}')
+        && request.resource.data.keys().hasOnly(['ownerUid','name','createdAt'])
+        && request.resource.data.ownerUid == request.auth.uid && request.resource.data.createdAt == request.time
+        && text(request.resource.data.name,60) && request.resource.data.name.size() > 0
+        && accountHasTeamAfter(request.auth.uid,teamId)
+        && getAfter(/databases/$(database)/documents/teams/$(teamId)/settings/registration).data.codeKey.matches('[a-f0-9]{64}');
+      match /settings/registration {
+        allow create: if verifiedEmail() && createsTeam(request.auth.uid,teamId)
+          && request.resource.data.keys().hasOnly(['codeKey'])
+          && request.resource.data.codeKey.matches('[a-f0-9]{64}')
+          && getAfter(/databases/$(database)/documents/teamCodes/$(request.resource.data.codeKey)).data.teamId == teamId;
+      }
+      function member() { return verifiedEmail() && get(/databases/$(database)/documents/teams/$(teamId)/memberships/$(request.auth.uid)).data.active == true; }
+      function own(uid) { return member() && request.auth.uid == uid; }
+      function hash(s) { return hashing.sha256(s).toHexString().lower(); }
+      function text(s,n) { return s is string && s.size() <= n; }
+      function playerShape(d,id) {
+        return d.keys().hasOnly(['id','ownerUid','name','group','status','affiliation','stageMode','cohortYear','internalHistory','generation','gradeOverrides','nameKey','nameLock','version','deletedAt','createdAt','updatedAt'])
+          && d.id == id && text(d.name,60) && d.name.size() > 0 && d.name.matches('[ァ-ヺーヽヾ]+') && d.name.matches('.*[ァ-ヺ].*') && text(d.group,60)
+          && d.status in ['active','inactive'] && d.affiliation in ['internal','external','unspecified']
+          && d.stageMode in ['cohort','general','unspecified'] && (d.cohortYear == null || d.cohortYear is int && d.cohortYear >= 1900 && d.cohortYear <= 2200)
+          && (d.stageMode != 'cohort' || d.cohortYear != null) && d.internalHistory is bool
+          && (d.generation == null || d.generation is int && d.generation >= 1 && d.generation <= 9999)
+          && d.gradeOverrides is map && d.gradeOverrides.values().hasOnly([1,2,3,'general'])
+          && (d.gradeOverrides.size() == 0 || d.gradeOverrides.keys().join(';').matches('[0-9]{4}(;[0-9]{4})*'))
+          && d.version is int && d.version >= 1
+          && text(d.nameKey,1000) && d.nameLock == hash(d.nameKey)
+          && (d.deletedAt == null || d.deletedAt == request.time) && d.updatedAt == request.time;
+      }
+      function named(d,id) { return d.deletedAt != null || getAfter(/databases/$(database)/documents/teams/$(teamId)/playerNames/$(d.nameLock)).data.playerId == id; }
+      function joined(uid,d) {
+        let player = getAfter(/databases/$(database)/documents/teams/$(teamId)/players/$(d.playerId)).data;
+        return verifiedEmail() && request.auth.uid == uid && d.keys().hasOnly(['playerId','active','joinKey','createdAt'])
+          && d.active == true && d.createdAt == request.time && d.playerId == 'self-' + uid
+          && player.ownerUid == uid
+          && (d.joinKey == '' ? teamOwner() : invited() && get(/databases/$(database)/documents/teams/$(teamId)/joinSessions/$(uid)).data.joinKey == d.joinKey);
+      }
+      function validGate(key) { let g = get(/databases/$(database)/documents/teamCodes/$(key)).data; return g.teamId == teamId && g.expiresAt > request.time; }
+      function invited() {
+        return verifiedEmail() && !exists(/databases/$(database)/documents/teams/$(teamId)/memberships/$(request.auth.uid)) && exists(/databases/$(database)/documents/teams/$(teamId)/joinSessions/$(request.auth.uid))
+          && get(/databases/$(database)/documents/teams/$(teamId)/joinSessions/$(request.auth.uid)).data.createdAt + duration.value(1,'h') > request.time
+          && validGate(get(/databases/$(database)/documents/teams/$(teamId)/joinSessions/$(request.auth.uid)).data.joinKey);
+      }
+      function pendingLink(uid) { return exists(/databases/$(database)/documents/teams/$(teamId)/linkRequests/$(uid)) && get(/databases/$(database)/documents/teams/$(teamId)/linkRequests/$(uid)).data.status == 'pending'; }
+      function approving(uid,playerId) {
+        let before = get(/databases/$(database)/documents/teams/$(teamId)/linkRequests/$(uid)).data;
+        let after = getAfter(/databases/$(database)/documents/teams/$(teamId)/linkRequests/$(uid)).data;
+        return member() && before.approverUid == request.auth.uid && before.status == 'pending' && before.playerId == playerId
+          && uid != request.auth.uid && after.status == 'approved' && after.decidedAt == request.time;
+      }
+      function linkedMembership(uid,d) {
+        let r = get(/databases/$(database)/documents/teams/$(teamId)/linkRequests/$(uid)).data;
+        return d.keys().hasOnly(['playerId','active','joinKey','createdAt']) && d.active == true && d.createdAt == request.time
+          && d.joinKey == r.joinKey && approving(uid,d.playerId)
+          && getAfter(/databases/$(database)/documents/teams/$(teamId)/players/$(d.playerId)).data.ownerUid == uid;
+      }
+      match /joinSessions/{uid} {
+        allow get: if verifiedEmail() && request.auth.uid == uid;
+        allow create, update: if verifiedEmail() && request.auth.uid == uid && !exists(/databases/$(database)/documents/teams/$(teamId)/memberships/$(uid))
+          && request.resource.data.keys().hasOnly(['joinKey','createdAt']) && request.resource.data.createdAt == request.time && validGate(request.resource.data.joinKey);
+        allow delete, list: if false;
+      }
+      match /linkRequests/{uid} {
+        allow get: if verifiedEmail() && (request.auth.uid == uid || member() && resource.data.approverUid == request.auth.uid);
+        allow list: if member() && resource.data.approverUid == request.auth.uid;
+        allow create: if invited() && request.auth.uid == uid && !exists(/databases/$(database)/documents/teams/$(teamId)/memberships/$(uid))
+          && request.resource.data.keys().hasOnly(['uid','playerId','playerName','approverUid','joinKey','status','createdAt','decidedAt'])
+          && request.resource.data.uid == uid && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time && request.resource.data.decidedAt == null
+          && request.resource.data.joinKey == get(/databases/$(database)/documents/teams/$(teamId)/joinSessions/$(uid)).data.joinKey
+          && request.resource.data.approverUid != uid
+          && get(/databases/$(database)/documents/teams/$(teamId)/memberships/$(request.resource.data.approverUid)).data.active == true
+          && get(/databases/$(database)/documents/teams/$(teamId)/players/$(get(/databases/$(database)/documents/teams/$(teamId)/memberships/$(request.resource.data.approverUid)).data.playerId)).data.ownerUid == request.resource.data.approverUid
+          && get(/databases/$(database)/documents/teams/$(teamId)/players/$(request.resource.data.playerId)).data.ownerUid == null
+          && get(/databases/$(database)/documents/teams/$(teamId)/players/$(request.resource.data.playerId)).data.deletedAt == null
+          && request.resource.data.playerName == get(/databases/$(database)/documents/teams/$(teamId)/players/$(request.resource.data.playerId)).data.name;
+        allow update: if member() && resource.data.approverUid == request.auth.uid && resource.data.uid != request.auth.uid && resource.data.status == 'pending'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','decidedAt']) && request.resource.data.decidedAt == request.time
+          && (request.resource.data.status == 'rejected' || request.resource.data.status == 'approved'
+            && getAfter(/databases/$(database)/documents/teams/$(teamId)/memberships/$(uid)).data.playerId == resource.data.playerId
+            && getAfter(/databases/$(database)/documents/teams/$(teamId)/memberships/$(uid)).data.active == true
+            && getAfter(/databases/$(database)/documents/teams/$(teamId)/players/$(resource.data.playerId)).data.ownerUid == uid);
+        allow delete: if false;
+      }
+      match /memberships/{uid} {
+        allow get: if verifiedEmail() && request.auth.uid == uid;
+        allow create: if accountHasTeamAfter(uid,teamId) && (joined(uid,request.resource.data) && !pendingLink(uid) || linkedMembership(uid,request.resource.data));
+        allow update, delete, list: if false;
+      }
+      match /players/{id} {
+        allow get: if member() || invited() && resource.data.deletedAt == null || (teamOwner() || invited()) && id == 'self-' + request.auth.uid;
+        allow list: if member() || invited() && resource.data.deletedAt == null;
+        allow create: if playerShape(request.resource.data,id) && named(request.resource.data,id)
+          && request.resource.data.version == 1 && request.resource.data.createdAt == request.time && request.resource.data.deletedAt == null
+          && (member() && request.resource.data.ownerUid == null
+            || verifiedEmail() && id == 'self-' + request.auth.uid && request.resource.data.ownerUid == request.auth.uid
+              && getAfter(/databases/$(database)/documents/teams/$(teamId)/memberships/$(request.auth.uid)).data.playerId == id);
+        allow update: if member() && playerShape(request.resource.data,id) && named(request.resource.data,id)
+          && (request.resource.data.ownerUid == resource.data.ownerUid || resource.data.ownerUid == null && resource.data.deletedAt == null
+            && request.resource.data.ownerUid is string && approving(request.resource.data.ownerUid,id)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownerUid','version','updatedAt'])) && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.version == resource.data.version + 1;
+        allow delete: if false;
+      }
+      match /playerNames/{key} {
+        allow get: if member() || invited() || teamOwner() && !exists(/databases/$(database)/documents/teams/$(teamId)/playerNames/$(key));
+        allow list: if false;
+        allow create: if verifiedEmail() && request.resource.data.keys().hasOnly(['playerId','key']) && key == hash(request.resource.data.key)
+          && getAfter(/databases/$(database)/documents/teams/$(teamId)/players/$(request.resource.data.playerId)).data.nameLock == key
+          && getAfter(/databases/$(database)/documents/teams/$(teamId)/players/$(request.resource.data.playerId)).data.deletedAt == null
+          && (member() || getAfter(/databases/$(database)/documents/teams/$(teamId)/players/$(request.resource.data.playerId)).data.ownerUid == request.auth.uid);
+        allow update: if member() && request.resource.data == resource.data;
+        allow delete: if member() && (getAfter(/databases/$(database)/documents/teams/$(teamId)/players/$(resource.data.playerId)).data.deletedAt != null
+          || getAfter(/databases/$(database)/documents/teams/$(teamId)/players/$(resource.data.playerId)).data.nameLock != key);
+      }
+      function scores(s) {
+        return s is list && s.size() > 0 && s.join(';').split(';').size() == s.size()
+          && s.join(';').matches('([0-9]{1,15}|9007199254740991|[0-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990):([0-9]{1,15}|9007199254740991|[0-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990)(;([0-9]{1,15}|9007199254740991|[0-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990):([0-9]{1,15}|9007199254740991|[0-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]{1}|9007199254740990))*');
+      }
+      function selected(ids) { return ids is list && ids.size() >= 1 && ids.size() <= 2 && ids.toSet().size() == ids.size()
+        && exists(/databases/$(database)/documents/teams/$(teamId)/players/$(ids[0]))
+        && (ids.size() == 1 || exists(/databases/$(database)/documents/teams/$(teamId)/players/$(ids[1]))); }
+      function matchShape(d,id) {
+        return d.keys().hasOnly(['id','date','category','event','discipline','opponentType','sideAIds','sideBIds','opponents','scores','memo','memberSnapshots','canonical','matchKey','separate','version','createdBy','createdByName','updatedBy','createdAt','updatedAt','deletedAt'])
+          && d.id == id && d.date is string && d.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+          && d.category in ['公式戦','練習試合','ゲーム練'] && text(d.event,100) && text(d.memo,1500)
+          && d.discipline in ['シングルス','ダブルス'] && selected(d.sideAIds)
+          && d.sideAIds.size() == (d.discipline == 'シングルス' ? 1 : 2)
+          && d.opponentType in ['internal','external'] && d.sideBIds is list && d.opponents is list
+          && (d.opponentType == 'internal' ? selected(d.sideBIds) && d.sideBIds.size() == d.sideAIds.size() && !d.sideAIds.hasAny(d.sideBIds) && d.opponents.size() == 0
+            : d.sideBIds.size() == 0 && d.opponents.size() == d.sideAIds.size() && text(d.opponents[0],60) && (d.opponents.size() == 1 || text(d.opponents[1],60)))
+          && scores(d.scores) && d.memberSnapshots is map && text(d.canonical,100000)
+          && d.matchKey == hash(d.canonical) && d.separate is bool && d.version is int && text(d.createdByName,120)
+          && d.updatedBy == request.auth.uid && d.updatedAt == request.time
+          && (d.deletedAt == null || d.deletedAt == request.time);
+      }
+      function keyed(d,id) { return d.deletedAt != null || id in getAfter(/databases/$(database)/documents/teams/$(teamId)/matchKeys/$(d.matchKey)).data.ids; }
+      match /matches/{id} {
+        allow read: if member();
+        allow create: if member() && matchShape(request.resource.data,id) && keyed(request.resource.data,id)
+          && request.resource.data.version == 1 && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time && request.resource.data.deletedAt == null;
+        allow update: if member() && resource.data.deletedAt == null && matchShape(request.resource.data,id) && keyed(request.resource.data,id)
+          && request.resource.data.version == resource.data.version + 1
+          && request.resource.data.createdBy == resource.data.createdBy && request.resource.data.createdByName == resource.data.createdByName
+          && request.resource.data.createdAt == resource.data.createdAt;
+        allow delete: if false;
+      }
+      function keyShape(d,key) { return d.keys().hasOnly(['ids','canonical']) && d.ids is list && d.ids.toSet().size() == d.ids.size() && key == hash(d.canonical); }
+      function addedKey(id,key,canonical) { let m = getAfter(/databases/$(database)/documents/teams/$(teamId)/matches/$(id)).data; return m.matchKey == key && m.canonical == canonical && m.deletedAt == null; }
+      function changedKey(d,key) {
+        let added = d.ids.removeAll(resource.data.ids);
+        let removed = resource.data.ids.removeAll(d.ids);
+        return d.canonical == resource.data.canonical
+          && (added.size() == 0 || added.size() == 1 && addedKey(added[0],key,d.canonical))
+          && (removed.size() == 0 || removed.size() == 1 && (getAfter(/databases/$(database)/documents/teams/$(teamId)/matches/$(removed[0])).data.deletedAt != null
+            || getAfter(/databases/$(database)/documents/teams/$(teamId)/matches/$(removed[0])).data.matchKey != key));
+      }
+      match /matchKeys/{key} {
+        allow get: if member();
+        allow list: if false;
+        allow create: if member() && keyShape(request.resource.data,key) && request.resource.data.ids.size() == 1 && addedKey(request.resource.data.ids[0],key,request.resource.data.canonical);
+        allow update: if member() && keyShape(request.resource.data,key) && changedKey(request.resource.data,key);
+        allow delete: if false;
+      }
+      function noteText(s) { return s is string && s.matches('(?s).{0,1000}'); }
+      function noteShape(d,uid,id) {
+        return d.keys().hasOnly(['matchId','ownerId','ownerMemberId','context','goodPoints','improvements','nextAction','version','createdAt','updatedAt'])
+          && d.matchId == id && d.ownerId == uid && noteText(d.goodPoints) && noteText(d.improvements) && noteText(d.nextAction)
+          && d.goodPoints.size() + d.improvements.size() + d.nextAction.size() > 0
+          && d.context is map && d.context.keys().hasOnly(['date','category','event','discipline','sideA','sideB','scores'])
+          && text(d.context.date,10) && text(d.context.category,20) && text(d.context.event,100) && text(d.context.discipline,20)
+          && names(d.context.sideA) && names(d.context.sideB)
+          && scores(d.context.scores) && d.version is int && d.updatedAt == request.time;
+      }
+      function names(v) { return v is list && v.size() >= 1 && v.size() <= 2 && text(v[0],60) && (v.size() == 1 || text(v[1],60)); }
+      function participant(uid,id) {
+        let p = get(/databases/$(database)/documents/teams/$(teamId)/memberships/$(uid)).data.playerId;
+        let m = get(/databases/$(database)/documents/teams/$(teamId)/matches/$(id)).data;
+        return m.deletedAt == null && (p in m.sideAIds || p in m.sideBIds);
+      }
+      match /privateUsers/{uid}/feedback/{id} {
+        allow read: if own(uid);
+        allow create: if own(uid) && noteShape(request.resource.data,uid,id) && participant(uid,id)
+          && request.resource.data.ownerMemberId == get(/databases/$(database)/documents/teams/$(teamId)/memberships/$(uid)).data.playerId
+          && request.resource.data.version == 1 && request.resource.data.createdAt == request.time;
+        allow update: if own(uid) && noteShape(request.resource.data,uid,id)
+          && request.resource.data.ownerMemberId == resource.data.ownerMemberId && request.resource.data.context == resource.data.context
+          && request.resource.data.createdAt == resource.data.createdAt && request.resource.data.version == resource.data.version + 1;
+        allow delete: if own(uid);
+      }
     }
     match /{document=**} { allow read, write: if false; }
   }

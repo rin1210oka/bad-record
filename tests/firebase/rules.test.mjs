@@ -95,3 +95,36 @@ test('同時編集はトランザクションで再評価され古い版を拒�
   const save=()=>runTransaction(ref.firestore,async tx=>{const row=await tx.get(ref);if(row.data().version!==1)throw Error('conflict');tx.update(ref,{memo:'更新',version:2,updatedAt:serverTimestamp()});});
   const results=await Promise.allSettled([save(),save()]);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal((await getDoc(ref)).data().version,2);
 });
+
+test('チームが作成済みになってから本人を最初の選手として登録できる',async()=>{
+  await env.clearFirestore();
+  await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'setup/founder'),{email:verified.email}));
+  const key=hash('captain-selected-code');
+  const founder=client('founder');
+  const other=env.authenticatedContext('other',{...verified,email:'other@example.invalid'}).firestore();
+  function create(db){
+    const b=writeBatch(db);
+    b.set(doc(db,'team/current'),{name:'テスト部',createdAt:serverTimestamp()});
+    b.set(doc(db,'setup/teamRegistration'),{joinKey:key});
+    b.set(doc(db,'joinKeys',key),{enabled:true,expiresAt:Timestamp.fromMillis(Date.now()+86400000)});
+    return b.commit();
+  }
+  function registerFounderProfile(db,id){
+    const b=writeBatch(db),p=player('self-'+id,id);
+    b.set(doc(db,'memberships',id),{active:true,playerId:p.id,joinKey:'',createdAt:serverTimestamp()});
+    b.set(doc(db,'players',p.id),p);
+    b.set(doc(db,'playerNames',p.nameLock),{playerId:p.id,key:p.nameKey});
+    return b.commit();
+  }
+  await assertFails(registerFounderProfile(founder,'founder'));
+  await assertFails(create(other));
+  await assertSucceeds(create(founder));
+  assert.equal((await getDoc(doc(other,'team/current'))).data().name,'テスト部');
+  assert.equal((await getDoc(doc(founder,'memberships/founder'))).exists(),false);
+  await assertFails(getDoc(doc(other,'setup/teamRegistration')));
+  await assertFails(create(founder));
+  await assertFails(registerFounderProfile(other,'other'));
+  await assertSucceeds(registerFounderProfile(founder,'founder'));
+  await assertFails(setDoc(doc(other,'joinSessions/other'),{joinKey:hash('wrong'),createdAt:serverTimestamp()}));
+  await assertSucceeds(setDoc(doc(other,'joinSessions/other'),{joinKey:key,createdAt:serverTimestamp()}));
+});
