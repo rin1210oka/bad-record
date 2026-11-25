@@ -37,6 +37,6 @@ export default function JoinChoice({phrase,onPhraseChange,onJoined,userUid}:{phr
       <button type="button" className="text-button" onClick={()=>{setMode('choose');setError('');}}>登録方法の選択に戻る</button></fieldset></>:mode==='pending'?<><h2>本人確認を待っています</h2><p className="access-description">「{link?.playerName}」との紐づけを、指名した参加者に依頼しました。その人のアプリから確認できます。</p><p className="join-selected">確認番号：<strong>{userUid.slice(0,8)}</strong></p><p className="form-hint">確認先の人に、この番号と自分の名前を伝えてください。承認されると自動で次へ進みます。</p><button className="secondary access-submit" onClick={()=>void check()}>承認状況を確認する</button></>:<><h2>紐づけは承認されませんでした</h2><p className="access-description">選んだ名簿が自分のものか、確認をお願いした人と直接確認してください。別の人への頼み直しはできません。</p></>}
     {error&&<p role="alert" className="form-error">{error}</p>}
     {(mode==='choose'||mode==='existing')&&<button type="button" disabled={busy} className="text-button" onClick={()=>{setMode('verify');setTargetId('');setApproverUid('');setPlayers([]);setError('');}}>合言葉の確認に戻る</button>}
-    {registering&&<MemberForm member={null} onSaved={()=>{setRegistering(false);void joined.current().catch(e=>setError((e as Error).message));}} onClose={()=>setRegistering(false)}/>}
+    {registering&&<MemberForm member={null} selfRegistration onSaved={()=>{setRegistering(false);void joined.current().catch(e=>setError((e as Error).message));}} onClose={()=>setRegistering(false)}/>}
   </div>;
 }
