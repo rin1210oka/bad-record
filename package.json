@@ -14,7 +14,6 @@
     "test:domain": "node --test tests/domain.test.mjs",
     "test:firebase": "firebase emulators:exec --only auth,firestore --project demo-shuttle-note \"node --test --test-concurrency=1 tests/firebase/*.test.mjs\"",
     "deploy": "npm run build && firebase deploy --only firestore:rules,firestore:indexes,hosting",
-    "dev:local": "firebase emulators:exec --only auth,firestore --project demo-shuttle-note \"node scripts/dev-local.mjs\"",
     "check:deployment": "node scripts/check-deployment.mjs"
   },
   "dependencies": {

@@ -25,7 +25,7 @@ npm run dev
 Webアプリの公開設定は `.env.firebase.example` を参考に `.env.local` に設定します。
 秘密鍵やサービスアカウントのJSONは不要です。
 
-- `npm run dev:local`：本番へ接続しないローカル確認（テスト用合言葉：`shuttle-local`）
+- `npm run dev`：設定したFirebaseプロジェクトに接続して開発画面を起動（確認メールは実際に配信）
 - `npm run check:deployment`：認証設定と公開済み保存ルールの読み取り確認
 - `npm run build`：公開用ファイルを作成
 - `npm start`：ビルド済み画面をローカルで確認

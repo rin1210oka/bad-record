@@ -8,3 +8,28 @@
 .join-choice .access-submit+.access-submit{margin-top:12px}.join-fields{padding:0;border:0;min-width:0}.join-fields label{display:block;font-size:12px;margin:16px 0 8px}.join-fields input{display:block;width:100%;font-size:16px;padding:11px;border:1px solid var(--line);border-radius:6px;margin-top:8px;box-sizing:border-box}.join-player-list{padding:0;margin:10px 0;list-style:none;max-height:240px;overflow-y:auto}.join-player-list button{display:block;text-align:left;width:100%;min-height:52px;border:1px solid var(--line);border-radius:6px;background:#fff;color:#263f38;padding:10px 12px;margin:7px 0;cursor:pointer}.join-player-list button.is-selected{background:#edf3e1;border-color:#8caa65}.join-player-list strong,.join-player-list small{display:block;overflow-wrap:anywhere}.join-player-list small{font-size:11px;margin-top:4px}.join-selected{padding:12px;background:#edf3e1;border-radius:6px;overflow-wrap:anywhere}.join-choice>.text-button{margin-top:15px}.link-approvals{padding:18px;background:#f0f4e6;border:1px solid var(--line);border-radius:9px;margin-bottom:20px}.link-approvals h2{font-size:16px;margin:0 0 8px}.link-approvals>p{font-size:12px;line-height:1.8}.link-approvals article{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 0;border-top:1px solid var(--line)}.link-approvals article strong,.link-approvals article small{display:block}.link-approvals article strong{overflow-wrap:anywhere}.link-approvals article small{font-size:11px;margin-top:5px}.link-approval-actions{display:flex;flex-wrap:wrap;gap:8px}.link-approval-actions button{min-height:44px}.join-choice .form-error{line-height:1.8}@media(max-width:600px){.link-approval-actions{width:100%}.link-approval-actions button{flex:1;font-size:11px}.join-player-list button{font-size:14px}}
 
 .email-auth-links{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin-top:14px}.email-auth-links button{min-height:44px;text-align:left}.access-email{display:block;overflow-wrap:anywhere;margin:8px 0}.access-notice{padding:12px 14px;margin-top:16px;border:1px solid #d4e1c3;background:#f0f5e8;color:#405a36;border-radius:6px;font-size:12px;line-height:1.8}.access-form input[type=email],.access-form input[type=password]{font-size:16px}.access-form fieldset{min-width:0}
+
+.recent-team{display:block;margin-bottom:14px;padding:12px 14px;text-align:left;overflow-wrap:anywhere}
+.recent-team span,.recent-team strong,.access-team-name{display:block}
+.recent-team span{font-size:11px;font-weight:400}
+.recent-team strong{font-size:14px}
+
+.firebase-account-identity {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.firebase-account-team > strong {
+  color: var(--forest);
+}
+.topbar:has(.firebase-account-team) {
+  height: auto;
+  min-height: 91px;
+  padding-block: 8px;
+}
+@media (max-width: 600px) {
+  .topbar:has(.firebase-account-team) {
+    min-height: 78px;
+    padding-block: 12px;
+  }
+}

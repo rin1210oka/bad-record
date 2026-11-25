@@ -15,5 +15,5 @@ try{
   console.log('対象プロジェクト：'+project);
   console.log('メール／パスワード認証：'+(enabled?'有効':'未設定'));
   console.log('画面に対応する保存ルール：'+(matches?'反映済み':'不一致'));
-  if(!enabled||!matches){console.log('公開手順を確認し、画面と保存ルールを同じブランチから揃えて反映してください。ローカルだけの確認は npm run dev:local を使えます。');process.exitCode=1;}
+  if(!enabled||!matches){console.log('公開手順を確認し、画面と保存ルールを同じブランチから揃えて反映してください。Firebaseの保存ルールは、実際に接続するプロジェクトで使用されます。');process.exitCode=1;}
 }catch(error){console.error(error.message);process.exitCode=1;}
